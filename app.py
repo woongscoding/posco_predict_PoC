@@ -242,8 +242,16 @@ with col_out:
             # 3축 루브릭 채점(정량성/방향성/커버리지 + 종합) — 어느 축이 부족했는지 가시화
             st.plotly_chart(viz.eval_rubric_chart(research["history"]),
                             use_container_width=True)
-            st.plotly_chart(viz.eval_score_bar(research["history"]),
+            best_round = research.get("best_round")
+            st.plotly_chart(viz.eval_score_bar(research["history"], best_round),
                             use_container_width=True)
+            if best_round is not None:
+                best_h = next((h for h in research["history"]
+                               if h["round"] == best_round), None)
+                if best_h:
+                    st.caption(
+                        f"🏆 최고점 **{best_round}회차({best_h['score']}점)** 결과로 "
+                        f"조정계수를 추출했습니다 — 마지막 라운드가 더 낮아도 최고 라운드를 사용.")
 
             # refine 노드가 생성한 보강 쿼리를 라운드별로 표시
             refine_rows = [

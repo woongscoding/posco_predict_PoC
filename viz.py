@@ -145,19 +145,22 @@ def gap_gauge(required: float, projected: float, label: str = "목표 대비 갭
     return fig
 
 
-def eval_score_bar(history: list[dict]) -> go.Figure:
-    """리서치 평가 종합점수(overall) 이력 막대 (재시도별)."""
+def eval_score_bar(history: list[dict], best_round: int | None = None) -> go.Figure:
+    """리서치 평가 종합점수(overall) 이력 막대 (재시도별).
+    best_round 지정 시 그 라운드(조정계수 추출에 쓰인 최고점)에 🏆 표시."""
     if not history:
         return go.Figure()
     rounds = [f"{h['round']}회차" for h in history]
     scores = [h["score"] for h in history]
     colors = ["#E45756" if s < 80 else "#54A24B" for s in scores]
+    texts = [f"🏆 {s}" if h["round"] == best_round else str(s)
+             for h, s in zip(history, scores)]
     fig = go.Figure(go.Bar(x=rounds, y=scores, marker_color=colors,
-                           text=scores, textposition="outside"))
+                           text=texts, textposition="outside"))
     fig.add_hline(y=80, line_dash="dash", line_color="gray",
                   annotation_text="충분 기준 80점")
-    fig.update_layout(title="리서치 종합점수(overall) 추이", yaxis_range=[0, 100],
-                      yaxis_title="점수", height=300)
+    fig.update_layout(title="리서치 종합점수(overall) 추이 (🏆=추출 사용 라운드)",
+                      yaxis_range=[0, 105], yaxis_title="점수", height=300)
     return fig
 
 

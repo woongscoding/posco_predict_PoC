@@ -10,7 +10,7 @@
 | 전이 카운트 | HR 시스템 인사이동 이력 테이블 (연도별 직급·근속 변화, **다년 누적**) | `generate_dummy.py`가 **2020~기준연도 이력 패널**을 시뮬레이션 — 매년 전이확률 가정값(`TRANSITION_ASSUMPTIONS`)으로 개인을 추적(이탈 퇴장 + 신규채용 보충). 전 연도를 풀링해 카운트 | `generate_dummy.py` |
 | 초기 인력벡터 n(0) | 재직자 현황 스냅샷 (기준연도) | 패널에서 **기준연도 시점 재직자**만 집계(`get_base_year_headcount`) — 전 연도를 합산하지 않음. 초기 코호트는 `INITIAL_STATE_MIX` | `generate_dummy.py` |
 | 상태 라벨 | 직급코드 + 근속연수 파생 | 직급 + 근속밴드로 상태 부여 | `data_pipeline.py` |
-| 조정계수 | 외부 리서치 → 전문가 검토(델파이) | LangGraph 에이전트 web search 추출, 키 없으면 매핑 테이블 상수 | `research_agent.py` |
+| 조정계수 | 외부 리서치 → 전문가 검토(델파이) | LangGraph 에이전트가 web search → **루브릭 평가(정량성/방향성/커버리지)** → 부족 시 **refine 쿼리 보강 후 재검색** → 충분해지면 매핑 테이블 추출. 키 없으면 mock 시퀀스(58→74→86) | `research_agent.py` |
 | 목표 필요인력 | 사업계획·조직설계 TO | 사이드바 수기 입력 | `app.py` 사이드바 |
 
 ## 2. 개인 단위 레코드 스키마
