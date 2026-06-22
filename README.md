@@ -4,6 +4,28 @@
 
 > 핵심: 숫자 정확도가 아니라 **파이프라인이 단계별로 화면에서 도는 과정**과 **실데이터 교체 용이성**.
 
+## ☁️ Streamlit Community Cloud 무료 배포 (시연용)
+
+> 키는 절대 커밋하지 않는다. `.env`/`secrets.toml`은 `.gitignore`로 제외됨. 키는 Cloud의 **Secrets**에 넣는다.
+
+1. **GitHub repo 생성** — github.com 에서 빈 repo 생성 (예: `seonje-poc`). README/gitignore 추가 안 함(이미 있음).
+2. **푸시** (이 폴더에서):
+   ```bash
+   git remote add origin https://github.com/<내계정>/seonje-poc.git
+   git branch -M main
+   git push -u origin main      # 푸시 시 GitHub 로그인 창이 한 번 뜸
+   ```
+3. **배포** — [share.streamlit.io](https://share.streamlit.io) 로그인(GitHub 연동) → **New app** → repo/branch(main)/main file `app.py` 선택.
+4. **Secrets 등록** — 앱 대시보드 → **Settings → Secrets** 에 아래 붙여넣기:
+   ```toml
+   ANTHROPIC_API_KEY = "sk-ant-..."
+   APP_PASSWORD = "데모암호"   # (선택) 공개 링크 보호용. 빼면 게이트 없음
+   ```
+5. 저장하면 자동 재기동 → 발급된 `https://<앱이름>.streamlit.app` URL로 시연.
+
+- **공개 노출 주의**: 무료 앱 URL은 기본 공개. `APP_PASSWORD`를 설정하면 진입 시 암호를 요구해 API 크레딧을 보호한다. (또는 Streamlit Cloud의 앱 private + 이메일 초대 기능 사용)
+- **업데이트**: 코드 수정 후 `git push` 하면 Cloud가 자동 재배포.
+
 ## 실행법
 
 ```bash
