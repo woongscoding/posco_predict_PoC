@@ -239,7 +239,23 @@ with col_out:
 
         st.markdown(f"**모드:** `{research['mode']}`")
         if research["history"]:
-            st.plotly_chart(viz.eval_score_bar(research["history"]), use_container_width=True)
+            # 3축 루브릭 채점(정량성/방향성/커버리지 + 종합) — 어느 축이 부족했는지 가시화
+            st.plotly_chart(viz.eval_rubric_chart(research["history"]),
+                            use_container_width=True)
+            st.plotly_chart(viz.eval_score_bar(research["history"]),
+                            use_container_width=True)
+
+            # refine 노드가 생성한 보강 쿼리를 라운드별로 표시
+            refine_rows = [
+                {"라운드": f"{h['round']}회차",
+                 "부족 항목(missing)": ", ".join(h.get("missing") or []) or "—",
+                 "보강 쿼리(refine)": " / ".join(h.get("refine_queries") or []) or "—"}
+                for h in research["history"]
+            ]
+            if any(r["보강 쿼리(refine)"] != "—" for r in refine_rows):
+                st.markdown("**🔧 쿼리 보강 이력 (refine 노드 산출물)**")
+                st.dataframe(pd.DataFrame(refine_rows), use_container_width=True,
+                             hide_index=True)
 
         st.markdown("**산출물 1 — 트렌드 요약 카드**")
         for t in research["trends"]:

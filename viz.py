@@ -146,7 +146,7 @@ def gap_gauge(required: float, projected: float, label: str = "목표 대비 갭
 
 
 def eval_score_bar(history: list[dict]) -> go.Figure:
-    """리서치 평가 점수 이력 막대 (재시도별)."""
+    """리서치 평가 종합점수(overall) 이력 막대 (재시도별)."""
     if not history:
         return go.Figure()
     rounds = [f"{h['round']}회차" for h in history]
@@ -156,6 +156,37 @@ def eval_score_bar(history: list[dict]) -> go.Figure:
                            text=scores, textposition="outside"))
     fig.add_hline(y=80, line_dash="dash", line_color="gray",
                   annotation_text="충분 기준 80점")
-    fig.update_layout(title="리서치 평가 점수 추이", yaxis_range=[0, 100],
+    fig.update_layout(title="리서치 종합점수(overall) 추이", yaxis_range=[0, 100],
                       yaxis_title="점수", height=300)
+    return fig
+
+
+# 루브릭 3축 + 종합 색상
+RUBRIC_AXES = ["정량성", "방향성", "커버리지", "score"]
+RUBRIC_COLORS = {"정량성": "#4C78A8", "방향성": "#F58518",
+                 "커버리지": "#72B7B2", "score": "#54A24B"}
+RUBRIC_LABELS = {"정량성": "정량성", "방향성": "방향성",
+                 "커버리지": "커버리지", "score": "종합(overall)"}
+
+
+def eval_rubric_chart(history: list[dict]) -> go.Figure:
+    """라운드별 3축 루브릭(정량성·방향성·커버리지) + 종합점수 그룹 막대.
+    ★ 단일 점수가 아니라 어느 축이 부족해 재검색이 돌았는지 한눈에 보이게."""
+    if not history:
+        return go.Figure()
+    rounds = [f"{h['round']}회차" for h in history]
+    fig = go.Figure()
+    for axis in RUBRIC_AXES:
+        vals = [h.get(axis) for h in history]
+        if all(v is None for v in vals):
+            continue
+        vals = [0 if v is None else v for v in vals]
+        fig.add_trace(go.Bar(x=rounds, y=vals, name=RUBRIC_LABELS[axis],
+                             marker_color=RUBRIC_COLORS[axis],
+                             text=vals, textposition="outside"))
+    fig.add_hline(y=80, line_dash="dash", line_color="gray",
+                  annotation_text="통과 기준 80점")
+    fig.update_layout(barmode="group", title="라운드별 루브릭 채점 (3축 + 종합)",
+                      yaxis_range=[0, 105], yaxis_title="점수", height=340,
+                      legend=dict(orientation="h", y=1.12))
     return fig
