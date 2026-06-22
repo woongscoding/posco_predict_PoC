@@ -1,0 +1,16 @@
+# 비밀키 — 절대 커밋 금지
+.env
+.streamlit/secrets.toml
+
+# 가상환경 / 캐시
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# 로그/임시
+streamlit_boot.log
+*.log
+
+# Claude Code 로컬 설정
+.claude/

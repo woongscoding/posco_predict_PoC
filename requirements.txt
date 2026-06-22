@@ -1,0 +1,9 @@
+streamlit>=1.40
+pandas>=2.0
+numpy>=1.26
+plotly>=5.22
+python-dotenv>=1.0
+# 외부 리서치 에이전트 (real 모드용 — 없어도 mock 폴백으로 동작)
+langgraph>=0.2
+langchain-anthropic>=0.2
+anthropic>=0.40
