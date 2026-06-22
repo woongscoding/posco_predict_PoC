@@ -11,6 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from markov import STATES, ABSORBING, total_active, survivors_by_rank
+from research_agent import EVAL_PASS_THRESHOLD  # 통과 기준선·막대 색을 코드 단일 출처로 정합
 
 RANK_COLORS = {"사원": "#4C78A8", "대리": "#F58518", "차장": "#E45756"}
 
@@ -152,13 +153,13 @@ def eval_score_bar(history: list[dict], best_round: int | None = None) -> go.Fig
         return go.Figure()
     rounds = [f"{h['round']}회차" for h in history]
     scores = [h["score"] for h in history]
-    colors = ["#E45756" if s < 80 else "#54A24B" for s in scores]
+    colors = ["#E45756" if s < EVAL_PASS_THRESHOLD else "#54A24B" for s in scores]
     texts = [f"🏆 {s}" if h["round"] == best_round else str(s)
              for h, s in zip(history, scores)]
     fig = go.Figure(go.Bar(x=rounds, y=scores, marker_color=colors,
                            text=texts, textposition="outside"))
-    fig.add_hline(y=80, line_dash="dash", line_color="gray",
-                  annotation_text="충분 기준 80점")
+    fig.add_hline(y=EVAL_PASS_THRESHOLD, line_dash="dash", line_color="gray",
+                  annotation_text=f"충분 기준 {EVAL_PASS_THRESHOLD}점")
     fig.update_layout(title="리서치 종합점수(overall) 추이 (🏆=추출 사용 라운드)",
                       yaxis_range=[0, 105], yaxis_title="점수", height=300)
     return fig
@@ -187,8 +188,8 @@ def eval_rubric_chart(history: list[dict]) -> go.Figure:
         fig.add_trace(go.Bar(x=rounds, y=vals, name=RUBRIC_LABELS[axis],
                              marker_color=RUBRIC_COLORS[axis],
                              text=vals, textposition="outside"))
-    fig.add_hline(y=80, line_dash="dash", line_color="gray",
-                  annotation_text="통과 기준 80점")
+    fig.add_hline(y=EVAL_PASS_THRESHOLD, line_dash="dash", line_color="gray",
+                  annotation_text=f"통과 기준 {EVAL_PASS_THRESHOLD}점")
     fig.update_layout(barmode="group", title="라운드별 루브릭 채점 (3축 + 종합)",
                       yaxis_range=[0, 105], yaxis_title="점수", height=340,
                       legend=dict(orientation="h", y=1.12))

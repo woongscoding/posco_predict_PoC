@@ -141,54 +141,98 @@ if target_year <= base_year:
     st.error("목표연도는 기준연도보다 커야 합니다.")
     st.stop()
 
-if not run:
+# =============================================================
+# 실행/재현 결정
+#   ★ Streamlit 은 다운로드 버튼·사이드바 조작에도 스크립트를 rerun 한다.
+#     연산은 [예측 실행]을 누른 경우에만 수행해 결과를 session_state 에 저장하고,
+#     이후 rerun 에선 저장된 결과를 '다시 그리기'만 한다. (보고서 다운로드를 눌러도
+#     6단계 출력이 사라지지 않게 — 데모 중 화면 리셋 방지.)
+# =============================================================
+prev = st.session_state.get("results")
+cur_params = {
+    "base_year": int(base_year), "target_year": int(target_year),
+    "use_external": bool(use_external),
+    "target_required": target_required, "n_emp": int(n_emp),
+}
+
+if run:
+    compute = True
+elif prev is not None:
+    compute = False
+else:
     st.info("👈 사이드바에서 조건을 설정하고 **[예측 실행]**을 눌러주세요.")
     st.stop()
 
+# 재현 모드인데 사이드바 입력이 직전 실행과 달라졌으면 안내(표시값은 직전 실행 기준)
+if not compute and prev.get("params") != cur_params:
+    st.warning("입력이 바뀌었습니다 — 아래는 **직전 실행 결과**입니다. "
+               "**[예측 실행]**을 다시 누르면 새 조건으로 갱신됩니다.")
 
-# =============================================================
-# 실행 — 단계별 진행
-# =============================================================
+# 결과 컨테이너 R: compute 면 새로 채우고, 재현이면 저장본을 읽는다.
+R = {} if compute else dict(prev)
+# 표시·연산에 쓰는 파라미터는 '실행 시점' 값으로 고정 (재현 시 사이드바 변경에 흔들리지 않게)
+params = cur_params if compute else prev.get("params", cur_params)
+if compute:
+    R["params"] = params
+by, ty = params["base_year"], params["target_year"]
+use_ext, treq, nemp = params["use_external"], params["target_required"], params["n_emp"]
+
+
+def pause():
+    """진행감용 sleep — 실제 연산(compute) 때만. 재현 시엔 즉시 렌더."""
+    if compute:
+        time.sleep(STEP_PAUSE)
+
 
 # ---------- Stage 0: 더미 생성 ----------
+df = None  # compute 때만 채워져 Stage 1 까지 사용 (세션엔 미리보기/요약만 저장)
 with st.status("**Stage 0 — 더미 인력 '이력 패널' 생성** (개인 단위, 2020~기준연도)", expanded=True) as s0:
-    st.write(f"개인 단위 인사이동 이력 생성 중… ({gd.START_YEAR}~{int(base_year)}, 실데이터에선 HR 추출로 교체)")
-    df = gd.generate_dummy(n=n_emp, start_year=gd.START_YEAR, end_year=int(base_year))
-    time.sleep(STEP_PAUSE)
-    n_years = df["관측연도"].nunique()
-    st.write(f"✅ 총 **{len(df):,}건**의 전이 관측 (재직 ~{n_emp:,}명 × {n_years}개 관측연도). "
-             f"컬럼: `{', '.join(df.columns)}`")
+    if compute:
+        st.write(f"개인 단위 인사이동 이력 생성 중… ({gd.START_YEAR}~{by}, 실데이터에선 HR 추출로 교체)")
+        df = gd.generate_dummy(n=nemp, start_year=gd.START_YEAR, end_year=by)
+        pause()
+        R["df_head"] = df.head(10)
+        R["df_len"] = int(len(df))
+        R["df_cols"] = list(df.columns)
+        R["n_years"] = int(df["관측연도"].nunique())
+    st.write(f"✅ 총 **{R['df_len']:,}건**의 전이 관측 (재직 ~{nemp:,}명 × {R['n_years']}개 관측연도). "
+             f"컬럼: `{', '.join(R['df_cols'])}`")
     st.caption("1행 = 한 직원이 '관측연도'에 가진 상태(현재상태)와 그 다음 해 상태(다음연도_상태) = 인사이동 1건")
-    st.dataframe(df.head(10), use_container_width=True)
-    s0.update(label=f"**Stage 0 — 이력 패널 생성 완료 ({len(df):,}건 / {n_years}개 연도)**",
+    st.dataframe(R["df_head"], use_container_width=True)
+    s0.update(label=f"**Stage 0 — 이력 패널 생성 완료 ({R['df_len']:,}건 / {R['n_years']}개 연도)**",
               state="complete", expanded=False)
 
 
 # ---------- Stage 1: SQLite 적재 · SQL 조회 · 전처리 ----------
 with st.status("**Stage 1 — 내부데이터 수집·전처리** (SQLite + SQL + pandas)", expanded=True) as s1:
-    st.write("in-memory SQLite에 적재 중…")
-    conn = dp.load_to_sqlite(df)
-    time.sleep(STEP_PAUSE)
+    if compute:
+        st.write("in-memory SQLite에 적재 중…")
+        conn = dp.load_to_sqlite(df)
+        pause()
+        R["raw_preview"] = dp.run_query(conn, dp.SELECT_RAW)
+        R["byyear_preview"] = dp.run_query(conn, dp.SELECT_BY_YEAR)
+        clean = dp.preprocess(df)
+        R["n_clean"] = int(len(clean))
+        R["n_removed"] = int(R["df_len"] - len(clean))
+        R["counts"] = dp.build_transition_counts(clean)
+        R["n0"] = dp.get_initial_headcount(clean, by)
+    counts, n0 = R["counts"], R["n0"]
 
     st.markdown("**① 실제 SELECT 쿼리로 데이터 조회** (SQL로 끌어오는 과정 시연)")
     st.code(dp.SELECT_RAW.strip(), language="sql")
-    st.dataframe(dp.run_query(conn, dp.SELECT_RAW), use_container_width=True)
+    st.dataframe(R["raw_preview"], use_container_width=True)
 
     st.markdown("**② 관측연도별 이력 분포** (2020~기준연도 여러 해가 쌓인 패널)")
     st.code(dp.SELECT_BY_YEAR.strip(), language="sql")
-    st.dataframe(dp.run_query(conn, dp.SELECT_BY_YEAR), use_container_width=True)
+    st.dataframe(R["byyear_preview"], use_container_width=True)
 
     st.markdown("**③ pandas 전처리** (상태 라벨링·결측/이상치 정리)")
-    clean = dp.preprocess(df)
-    st.write(f"전처리 후 {len(clean):,}행 (제거 {len(df)-len(clean):,}행)")
+    st.write(f"전처리 후 {R['n_clean']:,}행 (제거 {R['n_removed']:,}행)")
 
     st.markdown("**④ 전이 집계** (`GROUP BY 현재상태 → 다음연도_상태`, 전 연도 풀링)")
     st.code(dp.SELECT_TRANSITIONS.strip(), language="sql")
-    counts = dp.build_transition_counts(clean)
     st.dataframe(counts, use_container_width=True)
     st.caption("↑ 전이 카운트 행렬 (행=현재상태, 열=다음연도 상태) — 여러 관측연도를 합산해 표본 확보")
-
-    n0 = dp.get_initial_headcount(clean, int(base_year))
     s1.update(label="**Stage 1 — 수집·전처리 완료**", state="complete", expanded=False)
 
 
@@ -201,18 +245,25 @@ with col_in:
     st.markdown("### 🏢 내부 트랙 — 마르코프 모델링")
     with st.status("Stage 2 — 전이행렬 추정·투영", expanded=True) as s2:
         st.write("전이카운트 → 행 정규화 + 라플라스 평활(+0.5)로 P 추정…")
-        P_base = mk.estimate_transition_matrix(counts)
-        time.sleep(STEP_PAUSE)
+        if compute:
+            R["P_base"] = mk.estimate_transition_matrix(counts)
+        P_base = R["P_base"]
+        pause()
         st.plotly_chart(viz.heatmap_matrix(P_base, "전이확률 행렬 P (Baseline)"),
                         use_container_width=True)
         st.caption("라플라스 평활: 표본 적을 때 0 관측 전이를 0%로 박제하지 않게 하는 안정화 장치.")
 
-        st.write(f"인력벡터 투영: n(t+1)=n(t)·P 를 {int(base_year)}→{int(target_year)} 반복…")
-        proj_base = mk.project(n0, P_base, int(base_year), int(target_year))
-        time.sleep(STEP_PAUSE)
+        st.write(f"인력벡터 투영: n(t+1)=n(t)·P 를 {by}→{ty} 반복…")
+        if compute:
+            R["proj_base"] = mk.project(n0, P_base, by, ty)
+        proj_base = R["proj_base"]
+        pause()
         st.plotly_chart(viz.line_total(proj_base), use_container_width=True)
         st.plotly_chart(viz.bar_by_rank(proj_base), use_container_width=True)
         st.caption("⚠️ 마르코프 무기억성 가정 — 실제 이탈은 근속·연령 영향. 본 모델은 근속밴드 상태로 부분 보완.")
+        st.caption("ℹ️ 본 투영은 **현 인력 stock의 '자연 감쇠' 기준선**입니다 — 신규채용 유입 항은 모델에 없어 "
+                   "총원이 단조 감소합니다(차장 누수를 또렷이 보이게 하려는 의도). 채용은 갭에 대응하는 "
+                   "별도 레버로 다룹니다(로드맵: `n(t+1)=n(t)·P + 채용벡터(t)`).")
         s2.update(label="Stage 2 — 내부 베이스라인 완료", state="complete", expanded=True)
 
 # ===== 외부 트랙: Stage 3 리서치 에이전트 =====
@@ -224,18 +275,27 @@ with col_out:
 
         st.markdown("**실시간 검증 로그**")
         log_box = st.container()
-        logs: list[str] = []
-
-        def emit(ev: dict):
-            # 노드 실행마다 실시간 로그 카드 갱신
-            logs.append(ev.get("message", str(ev)))
-            with log_box:
-                st.write(ev.get("message", str(ev)))
-            time.sleep(STEP_PAUSE)
-
         keyword = "철강·제조 인력시장, AI 도입, 정년·신규채용 동향, 경력직 이직률"
         st.caption(f"검색 키워드: _{keyword}_")
-        research = run_research_agent(keyword, use_real=None, emit=emit)
+
+        if compute:
+            logs: list[str] = []
+
+            def emit(ev: dict):
+                # 노드 실행마다 실시간 로그 카드 갱신
+                logs.append(ev.get("message", str(ev)))
+                with log_box:
+                    st.write(ev.get("message", str(ev)))
+                time.sleep(STEP_PAUSE)
+
+            R["research"] = run_research_agent(keyword, use_real=None, emit=emit)
+            R["logs"] = logs
+        else:
+            # 재현: 저장된 로그를 그대로 다시 출력
+            with log_box:
+                for m in R.get("logs", []):
+                    st.write(m)
+        research = R["research"]
 
         st.markdown(f"**모드:** `{research['mode']}`")
         if research["history"]:
@@ -281,25 +341,32 @@ with col_out:
 
 # ---------- Stage 4: 행렬 재조정 ----------
 st.markdown("## 🔧 Stage 4 — 행렬 재조정 (외부보정 시나리오)")
-if use_external:
+if use_ext:
     with st.status("조정계수를 P에 적용 → 재정규화 → 재투영", expanded=True) as s4:
-        P_adj = mk.adjust_matrix(P_base, research["coefficients"])
-        time.sleep(STEP_PAUSE)
+        if compute:
+            R["P_adj"] = mk.adjust_matrix(R["P_base"], research["coefficients"])
+            R["proj_adj"] = mk.project(n0, R["P_adj"], by, ty)
+        P_adj, proj_adj = R["P_adj"], R["proj_adj"]
+        pause()
         c1, c2 = st.columns(2)
         with c1:
-            st.plotly_chart(viz.heatmap_matrix(P_base, "조정 전 P (Baseline)"),
+            st.plotly_chart(viz.heatmap_matrix(R["P_base"], "조정 전 P (Baseline)"),
                             use_container_width=True)
         with c2:
             st.plotly_chart(viz.heatmap_matrix(P_adj, "조정 후 P (Adjusted)"),
                             use_container_width=True)
-        st.plotly_chart(viz.heatmap_diff(P_base, P_adj), use_container_width=True)
-        st.caption("↑ 어느 전이가 얼마나 바뀌었는지(%p). 적용 후 각 행 재정규화로 합=1 유지.")
-        proj_adj = mk.project(n0, P_adj, int(base_year), int(target_year))
+        st.plotly_chart(viz.heatmap_diff(R["P_base"], P_adj), use_container_width=True)
+        st.caption("↑ 어느 전이가 얼마나 바뀌었는지(%p). 대상 셀은 명목 delta_pp 그대로 반영하고 "
+                   "나머지 셀만 비례 조정해 합=1 유지 — 매핑 테이블 값과 diff 히트맵이 일치합니다.")
         s4.update(label="Stage 4 — 재조정·재투영 완료", state="complete", expanded=True)
 else:
     st.info("외부보정 토글 OFF — Adjusted = Baseline 으로 처리합니다.")
-    P_adj = P_base
-    proj_adj = proj_base
+    if compute:
+        R["P_adj"] = R["P_base"]
+        R["proj_adj"] = R["proj_base"]
+
+P_base, proj_base = R["P_base"], R["proj_base"]
+P_adj, proj_adj = R["P_adj"], R["proj_adj"]
 
 
 # ---------- Stage 5: 시나리오 비교 (수렴) ----------
@@ -308,17 +375,17 @@ with st.status("Baseline vs Adjusted 비교 시각화", expanded=True) as s5:
     st.plotly_chart(viz.compare_total(proj_base, proj_adj), use_container_width=True)
     st.plotly_chart(viz.compare_by_rank(proj_base, proj_adj), use_container_width=True)
     st.markdown("**델타 분해 뷰 — 어느 직급·시점에서 갭이 벌어지는가** (인사이트 핵심)")
-    if use_external:
+    if use_ext:
         st.plotly_chart(viz.delta_decomposition(proj_base, proj_adj), use_container_width=True)
     else:
         st.info("외부보정 토글 OFF — Adjusted = Baseline 이라 델타가 전부 0입니다. "
                 "토글을 켜면 외부동향 보정에 따른 직급·시점별 갭이 이 자리에 표시됩니다.")
 
-    if target_required:
+    if treq:
         st.markdown("### 목표 필요인력 대비 갭")
         by_rank_end = mk.survivors_by_rank(proj_adj).iloc[-1]
-        gcols = st.columns(len(target_required))
-        for (rank, req), gc in zip(target_required.items(), gcols):
+        gcols = st.columns(len(treq))
+        for (rank, req), gc in zip(treq.items(), gcols):
             proj_val = float(by_rank_end.get(rank, 0))
             with gc:
                 st.plotly_chart(viz.gap_gauge(req, proj_val, f"{rank}"),
@@ -334,16 +401,23 @@ with st.status("Baseline vs Adjusted 비교 시각화", expanded=True) as s5:
 # ---------- Stage 6: 보고서 초안 ----------
 st.markdown("## 📝 Stage 6 — 보고서 초안 생성")
 with st.status("구조화된 산출물 → LLM(또는 목업) 보고서", expanded=True) as s6:
-    report_md, rmode = generate_report(
-        proj_base, proj_adj, research["trends"], research["coefficients"],
-        int(base_year), int(target_year), target_required)
+    if compute:
+        report_md, rmode = generate_report(
+            proj_base, proj_adj, research["trends"], research["coefficients"],
+            by, ty, treq)
+        R["report_md"], R["rmode"] = report_md, rmode
+    report_md, rmode = R["report_md"], R["rmode"]
     st.markdown(f"**생성 모드:** `{rmode}`")
     s6.update(label=f"Stage 6 — 보고서 생성 완료 ({rmode})", state="complete", expanded=True)
+
+# 연산 결과를 세션에 저장 → 다운로드/사이드바 조작으로 rerun 돼도 위 출력이 유지됨
+if compute:
+    st.session_state["results"] = R
 
 st.markdown("---")
 st.markdown(report_md)
 st.download_button("⬇️ 보고서 다운로드 (.md)", data=report_md,
-                   file_name=f"인력예측보고서_{int(base_year)}_{int(target_year)}.md",
+                   file_name=f"인력예측보고서_{by}_{ty}.md",
                    mime="text/markdown")
 
 st.success("✅ 전체 파이프라인 완료 — 더미생성 → SQL조회 → 전처리 → 마르코프 → 외부보정 → 비교 → 보고서")

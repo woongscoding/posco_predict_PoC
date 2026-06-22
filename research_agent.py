@@ -46,7 +46,9 @@ EVAL_PASS_THRESHOLD = 75   # overall 이 점수 이상이면 '충분'
 EVAL_MODEL = "claude-sonnet-4-6"
 REFINE_MODEL = "claude-sonnet-4-6"            # 부족항목 기반 구체 쿼리 생성
 EXTRACT_MODEL = "claude-haiku-4-5-20251001"
-SEARCH_MODEL = "claude-opus-4-8"              # web search tool 사용
+# 검색·요약은 Opus급 추론이 불필요(웹 결과를 불릿으로 정리하는 작업) → Sonnet 으로 비용·지연 절감.
+# 최대 4라운드 호출되므로 공개 데모(공개 URL+APP_PASSWORD)에서 크레딧 부담이 특히 줄어든다.
+SEARCH_MODEL = "claude-sonnet-4-6"            # web search tool 사용
 REQUEST_TIMEOUT = 40          # anthropic 단일 호출 타임아웃(초) — 데모 중 무한대기 방지
 WEB_SEARCH_MAX_USES = 4       # web_search tool 라운드당 최대 호출 (비용/시간 상한)
 

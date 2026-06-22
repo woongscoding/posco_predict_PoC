@@ -90,28 +90,46 @@ def adjust_matrix(P: pd.DataFrame, adjustments: list[dict]) -> pd.DataFrame:
         [{"from": "대리_2년+", "to": "이탈", "delta_pp": +5.0}, ...]
         delta_pp 는 '퍼센트포인트'. +5.0 이면 해당 전이확률 += 0.05.
 
-    적용 후 흡수상태 외 각 행을 다시 정규화(합=1 유지).
+    ★ 명목 delta_pp 보존 방식 (표시 = 적용):
+       대상 셀을 (old + delta)로 '고정'하고, 행의 '나머지 셀들'만 비례 축소/확대해
+       합=1을 맞춘다. 행 전체를 재정규화하면 대상 셀도 같이 줄어 명목 delta가 희석되는데
+       (예: 매핑테이블 +5.0%p ↔ diff 히트맵 +4.6%p 불일치), 이 방식은 대상 전이의 변화폭이
+       heatmap_diff 에 명목값 그대로 찍히게 한다 — '블랙박스 아님' 셀링포인트와 정합.
     ★ 조정은 '명시적 가정(시나리오 레버)'이다 — 모델이 자동 보정한 것이 아님.
     """
     P2 = P.copy()
 
+    # 같은 from-행의 여러 조정을 모아 한 번에 처리 (상호 희석 방지)
+    by_row: dict[str, dict[str, float]] = {}
     for adj in adjustments:
         f, t, delta = adj["from"], adj["to"], adj["delta_pp"] / 100.0
         if f in P2.index and t in P2.columns and f != ABSORBING:
-            P2.loc[f, t] = np.clip(P2.loc[f, t] + delta, 0.0, 1.0)
+            by_row.setdefault(f, {})[t] = by_row.get(f, {}).get(t, 0.0) + delta
 
-    # 흡수상태 외 행 재정규화 (합=1 유지)
-    # ⚠️ 근사 주의: 한 셀에 +delta_pp 후 '행 전체'를 재정규화하므로, 실제 반영 폭은
-    #    명목 delta_pp와 정확히 같지 않다(분모 변동으로 희석). 데모 수준에선 방향성
-    #    표현으로 충분. 정밀히 하려면 이탈열에서 상쇄 차감 후 정규화하는 방식을 쓸 것.
-    for s in STATES:
-        if s == ABSORBING:
-            P2.loc[s, :] = 0.0
-            P2.loc[s, ABSORBING] = 1.0
-            continue
-        row_sum = P2.loc[s, :].sum()
-        if row_sum > 0:
-            P2.loc[s, :] = P2.loc[s, :] / row_sum
+    for f, targets in by_row.items():
+        row = P2.loc[f, :].copy()
+        # 대상 셀들을 old+delta 로 고정 (0~1 클립)
+        for t, delta in targets.items():
+            row[t] = float(np.clip(row[t] + delta, 0.0, 1.0))
+        fixed_sum = sum(row[t] for t in targets)
+        other_cols = [c for c in P2.columns if c not in targets]
+        old_other_sum = float(P2.loc[f, other_cols].sum())
+        residual = 1.0 - fixed_sum
+        if old_other_sum > 1e-12 and residual >= 0.0:
+            # 나머지 셀만 비례 조정 → 대상 셀의 명목 delta 그대로 보존
+            scale = residual / old_other_sum
+            for c in other_cols:
+                row[c] = P2.loc[f, c] * scale
+        else:
+            # 엣지(대상 합이 1 초과 등): 안전하게 행 전체 재정규화로 폴백
+            tot = row.sum()
+            if tot > 0:
+                row = row / tot
+        P2.loc[f, :] = row
+
+    # 흡수상태 강제: 이탈 → 이탈 = 1
+    P2.loc[ABSORBING, :] = 0.0
+    P2.loc[ABSORBING, ABSORBING] = 1.0
     return P2
 
 
