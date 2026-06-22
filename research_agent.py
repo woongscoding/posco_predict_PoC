@@ -33,14 +33,19 @@ import re
 import json
 from typing import Callable, Optional, TypedDict
 
+from markov import STATES   # 조정계수 검증·extract 프롬프트의 단일 출처(상태 목록)
+
 # ----- 설정 -----
 MAX_RETRY = 3                                  # refine 수렴 여지 확보 (2→3)
+# ★ 라이브 데모에서 시간이 걱정되면 MAX_RETRY=2 로 낮추면 라운드 수가 준다.
 EVAL_PASS_THRESHOLD = 80   # overall 이 점수 이상이면 '충분'
 # 평가/보강은 일관성이 중요 → Sonnet (단일 점수 Haiku 대비 루브릭 안정성↑)
 EVAL_MODEL = "claude-sonnet-4-6"
 REFINE_MODEL = "claude-sonnet-4-6"            # 부족항목 기반 구체 쿼리 생성
 EXTRACT_MODEL = "claude-haiku-4-5-20251001"
 SEARCH_MODEL = "claude-opus-4-8"              # web search tool 사용
+REQUEST_TIMEOUT = 40          # anthropic 단일 호출 타임아웃(초) — 데모 중 무한대기 방지
+WEB_SEARCH_MAX_USES = 4       # web_search tool 라운드당 최대 호출 (비용/시간 상한)
 
 EmitFn = Callable[[dict], None]
 
@@ -204,7 +209,22 @@ MOCK_COEFFICIENTS = [
 # =============================================================
 def _anthropic_client():
     import anthropic
-    return anthropic.Anthropic()
+    # timeout 지정 — 네트워크 지연 시 데모가 무한 대기에 걸리지 않게
+    return anthropic.Anthropic(timeout=REQUEST_TIMEOUT)
+
+
+def _validate_coefficients(coeffs: list, states: list) -> tuple[list, list]:
+    """추출된 조정계수 중 from/to가 실제 STATES에 있는 것만 유효로 통과시킨다.
+    (LLM이 환각한 상태명은 adjust_matrix에서 조용히 무시되어 '표시≠적용'이 되므로
+     여기서 걸러 화면 표시와 실제 적용을 일치시킨다.)"""
+    sset = set(states)
+    valid, dropped = [], []
+    for c in coeffs:
+        if c.get("from") in sset and c.get("to") in sset:
+            valid.append(c)
+        else:
+            dropped.append(c)
+    return valid, dropped
 
 
 def _real_research(keyword: str, queries: Optional[list], round_no: int) -> list[str]:
@@ -226,7 +246,8 @@ def _real_research(keyword: str, queries: Optional[list], round_no: int) -> list
     resp = client.messages.create(
         model=SEARCH_MODEL,
         max_tokens=1200,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
+        tools=[{"type": "web_search_20250305", "name": "web_search",
+                "max_uses": WEB_SEARCH_MAX_USES}],
         messages=[{"role": "user", "content": instruction}],
     )
     texts = []
@@ -317,7 +338,6 @@ def _real_extract(keyword: str, snippets: list[str]) -> tuple[list, list]:
     """충분해진 결과에서 트렌드 요약 + 조정계수 매핑 테이블 추출."""
     client = _anthropic_client()
     joined = "\n".join(snippets)
-    states = ["사원_0-2년", "사원_2년+", "대리_0-2년", "대리_2년+", "차장_0-2년", "차장_2년+", "이탈"]
     resp = client.messages.create(
         model=EXTRACT_MODEL,
         max_tokens=800,
@@ -325,7 +345,7 @@ def _real_extract(keyword: str, snippets: list[str]) -> tuple[list, list]:
             "role": "user",
             "content": (
                 "아래 검색결과에서 인력 트렌드를 뽑고, 각 트렌드를 마르코프 전이확률 조정으로 매핑하라.\n"
-                f"사용 가능한 상태: {states}\n"
+                f"from/to 는 반드시 다음 상태 중 하나만 사용: {STATES}\n"
                 "delta_pp는 퍼센트포인트(예: +5.0). JSON만 출력:\n"
                 '{"trends":[{"name":"","desc":"","direction":""}],'
                 '"coefficients":[{"trend":"","from":"<상태>","to":"<상태>","delta_pp":0.0}]}\n\n'
@@ -414,6 +434,12 @@ def build_graph(emit: EmitFn = _noop):
             msg += f" (최고점 {bs}점 라운드 결과 기준)"
         emit({"type": "extract", "message": msg})
         trends, coeffs = _real_extract(state["keyword"], best_results)
+        # 상태명 검증 — 환각 상태로 'adjust_matrix에서 조용히 미적용'되는 레버 제거
+        coeffs, dropped = _validate_coefficients(coeffs, STATES)
+        if dropped:
+            bad = ", ".join(f"{d.get('from')}→{d.get('to')}" for d in dropped)
+            emit({"type": "error",
+                  "message": f"⚠️ 미적용 조정계수 {len(dropped)}건 제외(상태명 불일치): {bad}"})
         return {"trends": trends, "coefficients": coeffs}
 
     g = StateGraph(ResearchState)
@@ -503,6 +529,8 @@ def run_research_agent(keyword: str,
             }
         except Exception as e:
             emit({"type": "error", "message": f"⚠️ real 모드 실패 → mock 폴백: {e}"})
+            # real에서 이미 쌓인 평가 이력을 비워 mock 이력과 라운드 번호가 중복되지 않게
+            history.clear()
 
     # ---------- MOCK 폴백 ----------
     # 점수가 오르며(58→74→86) 통과하고, refine 보강 쿼리도 화면에 노출되게 재현.

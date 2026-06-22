@@ -86,7 +86,13 @@ DATA_SPEC.md       # 데이터 명세서
 
 - **더미 → 실데이터**: `generate_dummy.py`를 실 HR 추출로 교체하고, `data_pipeline.py`의 `SELECT_*` 쿼리만 실제 테이블 스키마에 맞게 수정. 이후 파이프라인은 그대로 동작.
 - **에이전트 mock ↔ real**: 환경변수 `ANTHROPIC_API_KEY` 유무로 자동 토글.
-- **상태 해상도**: `markov.py`의 `STATES` 리스트만 바꾸면 직급/근속밴드 확장 (단, `generate_dummy.py` 가정 테이블도 동기화).
+- **상태 해상도**: `markov.py`의 `STATES`가 기준 출처. 단, 상태를 바꾸면 **함께 수정할 지점이 있다** ↓
+  | # | 파일 | 수정 대상 |
+  |---|---|---|
+  | 1 | `markov.py` | `STATES`, `ABSORBING`, `survivors_by_rank`의 `rank_map` |
+  | 2 | `generate_dummy.py` | `STATES`(자체 정의), `TRANSITION_ASSUMPTIONS`, `RANK_OF_STATE`, `TENURE_RANGE`, `INITIAL_STATE_MIX` |
+  | 3 | `viz.py` | `RANK_COLORS`, 직급 루프 `["사원","대리","차장"]` |
+  - `data_pipeline.py`·`research_agent.py`는 `from markov import STATES`로 자동 추종(추가 수정 불필요).
 - **고도화 로드맵**: 데이터 규모 충분 시 **계층적 풀링/베이지안(디리클레)** 추정으로 전이확률 안정화 가능.
 
 ## 주의

@@ -308,7 +308,11 @@ with st.status("Baseline vs Adjusted 비교 시각화", expanded=True) as s5:
     st.plotly_chart(viz.compare_total(proj_base, proj_adj), use_container_width=True)
     st.plotly_chart(viz.compare_by_rank(proj_base, proj_adj), use_container_width=True)
     st.markdown("**델타 분해 뷰 — 어느 직급·시점에서 갭이 벌어지는가** (인사이트 핵심)")
-    st.plotly_chart(viz.delta_decomposition(proj_base, proj_adj), use_container_width=True)
+    if use_external:
+        st.plotly_chart(viz.delta_decomposition(proj_base, proj_adj), use_container_width=True)
+    else:
+        st.info("외부보정 토글 OFF — Adjusted = Baseline 이라 델타가 전부 0입니다. "
+                "토글을 켜면 외부동향 보정에 따른 직급·시점별 갭이 이 자리에 표시됩니다.")
 
     if target_required:
         st.markdown("### 목표 필요인력 대비 갭")

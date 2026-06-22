@@ -101,6 +101,9 @@ def adjust_matrix(P: pd.DataFrame, adjustments: list[dict]) -> pd.DataFrame:
             P2.loc[f, t] = np.clip(P2.loc[f, t] + delta, 0.0, 1.0)
 
     # 흡수상태 외 행 재정규화 (합=1 유지)
+    # ⚠️ 근사 주의: 한 셀에 +delta_pp 후 '행 전체'를 재정규화하므로, 실제 반영 폭은
+    #    명목 delta_pp와 정확히 같지 않다(분모 변동으로 희석). 데모 수준에선 방향성
+    #    표현으로 충분. 정밀히 하려면 이탈열에서 상쇄 차감 후 정규화하는 방식을 쓸 것.
     for s in STATES:
         if s == ABSORBING:
             P2.loc[s, :] = 0.0

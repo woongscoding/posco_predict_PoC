@@ -149,7 +149,7 @@ README.md             # 실행법, 실데이터 교체 가이드
 ## 6. 교체 가능성(swap points) — README에 명시
 - **더미 → 실데이터**: `generate_dummy.py` 대신 실제 HR 추출로 교체, `data_pipeline.py`의 SQL만 실제 테이블에 맞게 수정
 - **에이전트 mock ↔ real**: 환경변수로 토글
-- **상태 해상도**: `markov.py`의 상태 리스트만 바꾸면 확장(직급/근속밴드 추가)
+- **상태 해상도**: `markov.py`의 `STATES`가 기준 출처. 단 상태 변경 시 함께 고칠 지점 → ① `markov.py`(STATES/ABSORBING/rank_map) ② `generate_dummy.py`(자체 STATES·TRANSITION_ASSUMPTIONS·RANK_OF_STATE·TENURE_RANGE·INITIAL_STATE_MIX) ③ `viz.py`(RANK_COLORS·직급 루프). `data_pipeline.py`/`research_agent.py`는 `from markov import STATES`로 자동 추종
 - **고도화 로드맵 한 줄**: "데이터 규모 충분 시 계층적 풀링/베이지안(디리클레)으로 추정 안정화 가능" — README에 적어둘 것
 
 ## 7. 비기능 요구

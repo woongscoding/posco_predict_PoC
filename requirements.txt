@@ -4,6 +4,6 @@ numpy>=1.26
 plotly>=5.22
 python-dotenv>=1.0
 # 외부 리서치 에이전트 (real 모드용 — 없어도 mock 폴백으로 동작)
+# 그래프는 langgraph, LLM/웹검색은 anthropic SDK를 직접 사용 (langchain 불필요)
 langgraph>=0.2
-langchain-anthropic>=0.2
 anthropic>=0.40
