@@ -174,7 +174,8 @@ render_header()
 with st.sidebar:
     st.markdown('<span class="posco-mark">POSCO</span>', unsafe_allow_html=True)
     st.header("조정 레버")
-    years = st.slider("추계 연수", 3, 15, step=1, key="k_years")
+    years = st.slider("추계 연수", 1, 15, step=1, key="k_years",
+                      help="1년(내년만)부터 가능. 가벼운 단기 시뮬은 1~2년으로.")
 
     st.divider()
     st.subheader("승진율")
