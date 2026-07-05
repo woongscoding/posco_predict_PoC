@@ -33,7 +33,7 @@ def build_system_prompt(ctx: dict) -> str:
         "현재 시뮬 수치:\n"
         f"- 추계 연수: {ctx.get('years')}년\n"
         f"- 조정 레버: 승진율 {ctx.get('promo_pct'):+d}% · 퇴직률 {ctx.get('attr_pct'):+d}% · "
-        f"인건비 인상률 {ctx.get('raise_rate'):.1f}%\n"
+        f"인건비 인상률 {ctx.get('raise_rate'):.2f}%\n"
         f"- 최종연도 총원: baseline {ctx.get('tot_base'):,.0f}명 → 시뮬 {ctx.get('tot_sim'):,.0f}명 "
         f"(Δ {ctx.get('tot_sim', 0) - ctx.get('tot_base', 0):+,.0f}명)\n"
         f"- {ctx.get('years')}년 누적 인건비 Δ(vs baseline): {ctx.get('cum_delta_eok'):+,.0f}억\n"
@@ -66,7 +66,7 @@ def rule_reply(messages: list[dict], ctx: dict) -> str:
     direction = "증가" if cum >= 0 else "감소"
     return (
         f"(rule 모드) 현재 조정(승진율 {ctx.get('promo_pct'):+d}% · 퇴직률 {ctx.get('attr_pct'):+d}% · "
-        f"인상률 {ctx.get('raise_rate'):.1f}%) 기준으로 **{ctx.get('years')}년 후 총원 "
+        f"인상률 {ctx.get('raise_rate'):.2f}%) 기준으로 **{ctx.get('years')}년 후 총원 "
         f"{ctx.get('tot_sim'):,.0f}명**(baseline 대비 {tot_d:+,.0f}명), "
         f"누적 인건비는 baseline 대비 **{cum:+,.0f}억 {direction}**, "
         f"상위단계 비중 {top_d:+.1f}%p 변동입니다.\n\n"

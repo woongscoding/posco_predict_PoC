@@ -153,17 +153,21 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🔼 승진율")
-    promo_pct = st.slider("승진율 조정", -50, 100, step=5, format="%d%%", key="k_promo",
-                          help="baseline 승진율 대비 배율. +30%면 승진율 ×1.3. "
-                               "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
+    promo_pct = st.number_input("승진율 조정 (%, baseline 대비)", min_value=-50, max_value=100,
+                                step=1, key="k_promo",
+                                help="baseline 승진율 대비 배율. +30 이면 승진율 ×1.3. "
+                                     "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
 
     st.subheader("🔽 퇴직률")
-    attr_pct = st.slider("퇴직률 조정", -50, 100, step=5, format="%d%%", key="k_attr",
-                         help="baseline 퇴직률 대비 배율. -20%면 퇴직률 ×0.8.")
+    attr_pct = st.number_input("퇴직률 조정 (%, baseline 대비)", min_value=-50, max_value=100,
+                               step=1, key="k_attr",
+                               help="baseline 퇴직률 대비 배율. -20 이면 퇴직률 ×0.8.")
 
     st.subheader("💰 인건비 인상률")
-    raise_rate = st.slider("연 인상률", 0.0, 10.0, step=0.5, format="%.1f%%", key="k_raise",
-                           help="매년 단가 = 단가×(1+인상률)^연차")
+    raise_rate = st.number_input("연 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
+                                 format="%.2f", key="k_raise",
+                                 help="직접 기입(예: 3.15). 매년 단가 = 단가×(1+인상률)^연차. "
+                                      "인상률은 민감하니 소수점까지 입력하세요(최대 10%).")
 
     st.divider()
     view_mode = st.radio("결과 보기 방식", ["📋 표(숫자)", "📈 차트"], horizontal=True,
@@ -173,7 +177,7 @@ with st.sidebar:
     st.caption(
         f"승진율 배율 ×{1 + promo_pct/100:.2f} · "
         f"퇴직률 배율 ×{1 + attr_pct/100:.2f} · "
-        f"인상률 {raise_rate:.1f}%"
+        f"인상률 {raise_rate:.2f}%"
     )
     st.caption("© POSCO HR PoC · 더미데이터 기반 목업")
 
