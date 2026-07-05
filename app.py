@@ -21,10 +21,25 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+# .env 의 ANTHROPIC_API_KEY 등을 환경변수로 로드(로컬). 배포에선 .env 가 없어 그냥 통과.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 import sim_core as sc
 import snapshots as snap
+import insight_bot
 
 st.set_page_config(page_title="POSCO 인력운영 시뮬레이터", layout="wide", page_icon="🔷")
+
+# Streamlit Cloud 배포용: Secrets 에 넣은 키를 환경변수로 브리지(insight_bot 은 os.environ 을 읽음).
+try:
+    if "ANTHROPIC_API_KEY" in st.secrets and not os.environ.get("ANTHROPIC_API_KEY"):
+        os.environ["ANTHROPIC_API_KEY"] = str(st.secrets["ANTHROPIC_API_KEY"])
+except Exception:
+    pass
 
 # =============================================================
 # 브랜드 팔레트 (푸른색 계열)
@@ -40,6 +55,9 @@ FAMILY_COLOR = {"P": POSCO_NAVY, "R": POSCO_BLUE, "E": POSCO_CYAN, "A": STEEL_BL
 
 # 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
 SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0, "k_attr": 0, "k_raise": 3.0}
+
+# 차트 클릭 확대/툴바 끄기 (정적 표시) — 축 fixedrange 와 함께 줌·팬 차단
+PLOTLY_CONFIG = {"displayModeBar": False, "staticPlot": False, "scrollZoom": False}
 
 
 # =============================================================
@@ -148,12 +166,18 @@ with st.sidebar:
                            help="매년 단가 = 단가×(1+인상률)^연차")
 
     st.divider()
+    view_mode = st.radio("결과 보기 방식", ["📋 표(숫자)", "📈 차트"], horizontal=True,
+                         help="표=숫자만 / 차트=클릭 확대 없이 정적으로 표시")
+
+    st.divider()
     st.caption(
         f"승진율 배율 ×{1 + promo_pct/100:.2f} · "
         f"퇴직률 배율 ×{1 + attr_pct/100:.2f} · "
         f"인상률 {raise_rate:.1f}%"
     )
     st.caption("© POSCO HR PoC · 더미데이터 기반 목업")
+
+SHOW_TABLE = view_mode.startswith("📋")
 
 
 # =============================================================
@@ -200,7 +224,33 @@ def area_by_family(result: sc.SimResult, title: str, height: int = 320,
                       height=height, margin=dict(t=40 if title else 10, b=10, l=10, r=10),
                       showlegend=showlegend, legend=dict(orientation="h", y=-0.2),
                       plot_bgcolor="rgba(0,0,0,0)")
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
     return fig
+
+
+def headcount_table(result: sc.SimResult) -> pd.DataFrame:
+    """연도별 직군 인원 + 총원 표(숫자)."""
+    data = {}
+    for t, hc in enumerate(result.headcount_by_year):
+        byf = sc.headcount_by_family(hc)
+        row = {f: round(byf.get(f, 0.0)) for f in sc.FAMILY_LEVELS}
+        row["총원"] = round(sc.total_headcount(hc))
+        data[t] = row
+    df = pd.DataFrame.from_dict(data, orient="index")
+    df.index.name = "연차"
+    return df.reset_index()
+
+
+def cost_table(baseline: sc.SimResult, sim: sc.SimResult) -> pd.DataFrame:
+    """연도별 총 인건비 표(억원): baseline / 시뮬 / Δ."""
+    rows = []
+    for t, (b, s) in enumerate(zip(baseline.labor_cost_by_year, sim.labor_cost_by_year)):
+        rows.append({"연차": t,
+                     "baseline(억)": round(b / 1e8, 1),
+                     "시뮬(억)": round(s / 1e8, 1),
+                     "Δ(억)": round((s - b) / 1e8, 1)})
+    return pd.DataFrame(rows)
 
 
 def cost_overlay(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
@@ -215,6 +265,8 @@ def cost_overlay(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
     fig.update_layout(title="총 인건비 (억원)", xaxis_title="연차", yaxis_title="인건비(억원)",
                       height=300, margin=dict(t=40, b=10, l=10, r=10),
                       legend=dict(orientation="h", y=-0.25), plot_bgcolor="rgba(0,0,0,0)")
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
     return fig
 
 
@@ -226,6 +278,8 @@ def mini_cost(result: sc.SimResult) -> go.Figure:
     fig.update_layout(height=140, margin=dict(t=6, b=6, l=6, r=6), showlegend=False,
                       xaxis_title=None, yaxis_title="억원",
                       yaxis=dict(title_font=dict(size=10)), plot_bgcolor="rgba(0,0,0,0)")
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
     return fig
 
 
@@ -264,14 +318,27 @@ st.markdown("### ↔️ baseline ↔ 시뮬 좌우 비교")
 left, right = st.columns(2)
 with left:
     st.markdown("#### ⬅️ BASELINE (조정 없음)")
-    st.plotly_chart(area_by_family(baseline, "인력 구조 (직군 누적)"),
-                    use_container_width=True, key="area_base")
+    if SHOW_TABLE:
+        st.caption("연도별 직군 인원 · 총원")
+        st.dataframe(headcount_table(baseline), use_container_width=True, hide_index=True)
+    else:
+        st.plotly_chart(area_by_family(baseline, "인력 구조 (직군 누적)"),
+                        use_container_width=True, key="area_base", config=PLOTLY_CONFIG)
 with right:
     st.markdown("#### ➡️ 시뮬레이션 (조정 반영)")
-    st.plotly_chart(area_by_family(sim, "인력 구조 (직군 누적)"),
-                    use_container_width=True, key="area_sim")
+    if SHOW_TABLE:
+        st.caption("연도별 직군 인원 · 총원")
+        st.dataframe(headcount_table(sim), use_container_width=True, hide_index=True)
+    else:
+        st.plotly_chart(area_by_family(sim, "인력 구조 (직군 누적)"),
+                        use_container_width=True, key="area_sim", config=PLOTLY_CONFIG)
 
-st.plotly_chart(cost_overlay(baseline, sim), use_container_width=True, key="cost_overlay")
+st.markdown("#### 총 인건비 (baseline vs 시뮬)")
+if SHOW_TABLE:
+    st.dataframe(cost_table(baseline, sim), use_container_width=True, hide_index=True)
+else:
+    st.plotly_chart(cost_overlay(baseline, sim), use_container_width=True,
+                    key="cost_overlay", config=PLOTLY_CONFIG)
 
 with st.expander("🔍 최종연도 직군·단계별 인원 상세 (baseline / 시뮬 / Δ)"):
     rows = []
@@ -328,31 +395,80 @@ else:
                "'연수'가 다른 행은 기준 horizon 이 달라 절대 Δ를 직접 비교하지 마세요. "
                "baseline 스냅샷(조정 없음)의 Δ는 '—' 로 표기됩니다.")
 
-    st.markdown("#### 미니차트 (스냅샷별 인력구조 · 인건비)")
-    PER_ROW = 4
-    for start in range(0, len(snaps), PER_ROW):
-        row = snaps[start:start + PER_ROW]
-        cols = st.columns(len(row))
-        for s, col in zip(row, cols):
-            with col:
-                st.markdown(f"**{s.label}**")
-                st.plotly_chart(area_by_family(s.result, "", height=180, showlegend=False),
-                                use_container_width=True, key=f"mini_area_{s.snapshot_id}")
-                st.plotly_chart(mini_cost(s.result), use_container_width=True,
-                                key=f"mini_cost_{s.snapshot_id}")
+    if SHOW_TABLE:
+        st.markdown("#### 스냅샷별 최종연도 인원 (직군)")
+        final_rows = []
+        for s in snaps:
+            end = s.result.headcount_by_year[-1]
+            byf = sc.headcount_by_family(end)
+            row = {"라벨": s.label}
+            row.update({f: round(byf.get(f, 0.0)) for f in sc.FAMILY_LEVELS})
+            row["총원"] = round(sc.total_headcount(end))
+            final_rows.append(row)
+        st.dataframe(pd.DataFrame(final_rows), use_container_width=True, hide_index=True)
+    else:
+        st.markdown("#### 미니차트 (스냅샷별 인력구조 · 인건비)")
+        PER_ROW = 4
+        for start in range(0, len(snaps), PER_ROW):
+            row = snaps[start:start + PER_ROW]
+            cols = st.columns(len(row))
+            for s, col in zip(row, cols):
+                with col:
+                    st.markdown(f"**{s.label}**")
+                    st.plotly_chart(area_by_family(s.result, "", height=180, showlegend=False),
+                                    use_container_width=True, key=f"mini_area_{s.snapshot_id}",
+                                    config=PLOTLY_CONFIG)
+                    st.plotly_chart(mini_cost(s.result), use_container_width=True,
+                                    key=f"mini_cost_{s.snapshot_id}", config=PLOTLY_CONFIG)
 
 
 # =============================================================
-# rule 인사이트 (템플릿 문장 — LLM 없음)
+# 💬 대화형 인사이트 챗봇 (Claude, 메모리 유지 / 키 없으면 rule 폴백)
 # =============================================================
 st.divider()
-st.markdown("### 💬 인사이트 (rule 템플릿)")
-direction = "증가" if cum_delta >= 0 else "감소"
-st.info(
-    f"**{years}년 후** 총원 **{tot_sim:,.0f}명** "
-    f"(baseline 대비 **{tot_sim - tot_base:+,.0f}명**). "
-    f"누적 인건비는 baseline 대비 **{cum_delta/1e8:+,.0f}억** {direction}. "
-    f"승진율 {promo_pct:+d}% · 퇴직률 {attr_pct:+d}% · 인상률 {raise_rate:.1f}% 조정으로 "
-    f"상위단계 비중이 **{top_sim - top_base:+.1f}%p** 변동했습니다."
-)
-st.caption("※ 인사이트는 순수 rule 템플릿입니다(API 호출 0). LLM 서술은 추후 토글로 추가 예정.")
+st.markdown("### 💬 인사이트 챗봇")
+
+# 현재 시뮬 수치를 매 턴 컨텍스트로 주입
+insight_ctx = {
+    "years": int(years), "promo_pct": int(promo_pct), "attr_pct": int(attr_pct),
+    "raise_rate": float(raise_rate),
+    "tot_base": tot_base, "tot_sim": tot_sim,
+    "cum_delta_eok": cum_delta / 1e8,
+    "top_base": top_base, "top_sim": top_sim,
+    "family_end": {f: round(v) for f, v in sc.headcount_by_family(end_sim).items()},
+}
+
+if insight_bot.has_api_key():
+    st.caption("🟢 Claude 대화 모드 — 현재 시뮬 수치를 근거로 제안·질문하며 대화합니다.")
+else:
+    st.caption("🟡 rule 폴백 모드 — ANTHROPIC_API_KEY 설정 시 Claude 대화가 활성화됩니다.")
+
+col_chat, col_clear = st.columns([6, 1])
+with col_clear:
+    if st.button("대화 초기화", use_container_width=True):
+        st.session_state["chat"] = []
+        st.rerun()
+
+st.session_state.setdefault("chat", [])
+for m in st.session_state["chat"]:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+
+prompt = st.chat_input("이 시뮬 결과에 대해 물어보세요 (예: 인건비를 줄이려면?)")
+if prompt:
+    st.session_state["chat"].append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    with st.chat_message("assistant"):
+        if insight_bot.has_api_key():
+            try:
+                reply = st.write_stream(
+                    insight_bot.stream_reply(st.session_state["chat"], insight_ctx))
+            except Exception as e:  # 키 오류·네트워크 등 → rule 폴백
+                reply = insight_bot.rule_reply(st.session_state["chat"], insight_ctx)
+                st.markdown(reply)
+                st.caption(f"(Claude 호출 실패로 rule 폴백: {type(e).__name__})")
+        else:
+            reply = insight_bot.rule_reply(st.session_state["chat"], insight_ctx)
+            st.markdown(reply)
+    st.session_state["chat"].append({"role": "assistant", "content": reply})
