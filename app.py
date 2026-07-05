@@ -60,8 +60,12 @@ section[data-testid="stSidebar"] *{ color:#C7D5E8; }
 section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3{ color:#fff !important; font-weight:700; }
 section[data-testid="stSidebar"] .stNumberInput input, section[data-testid="stSidebar"] .stTextInput input{
-  background:rgba(255,255,255,.06); color:#fff; border:1px solid rgba(255,255,255,.18);
-  border-radius:9px; font-variant-numeric:tabular-nums; }
+  background:#FFFFFF !important; color:#0A2A52 !important; border:1px solid rgba(255,255,255,.35);
+  border-radius:9px; font-weight:700; font-variant-numeric:tabular-nums;
+  -webkit-text-fill-color:#0A2A52 !important; }
+/* number_input +/- 스텝 버튼: 흰 배경 위 진한 아이콘 */
+section[data-testid="stSidebar"] .stNumberInput button{ background:#FFFFFF !important; color:#0A2A52 !important; }
+section[data-testid="stSidebar"] .stNumberInput button svg{ fill:#0A2A52 !important; }
 section[data-testid="stSidebar"] .stSlider [role="slider"]{ background:var(--blue-lt); }
 .posco-mark{ display:inline-block; border:1.5px solid rgba(255,255,255,.4); border-radius:6px;
   padding:6px 12px; color:#fff; font-weight:800; letter-spacing:.04em; }
