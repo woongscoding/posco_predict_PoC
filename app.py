@@ -306,6 +306,55 @@ def cost_chart(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
     return fig
 
 
+# --- 직급 구조 실루엣 (모래시계 ↔ 피라미드) --------------------------------
+# 직군마다 단계 수가 달라(3~7단계) 직접 겹칠 수 없으므로, 각 단계의 '상대 위치'로
+# 5개 티어(하위→상위)에 합산한다. 중앙정렬 가로막대로 그리면 폭의 넓고좁음이
+# 그대로 조직 실루엣이 된다 — 허리가 얇으면 모래시계, 위로 갈수록 좁아지면 피라미드.
+TIER_ORDER = ["하위", "중하", "중위", "중상", "상위"]  # 아래→위
+
+
+def _tier_of(i: int, n: int) -> str:
+    p = i / (n - 1) if n > 1 else 0.5
+    if p < 0.2:
+        return "하위"
+    if p < 0.4:
+        return "중하"
+    if p < 0.6:
+        return "중위"
+    if p < 0.8:
+        return "중상"
+    return "상위"
+
+
+def tier_distribution(hc_year: dict[str, dict[str, float]]) -> dict[str, float]:
+    tiers = {t: 0.0 for t in TIER_ORDER}
+    for f, levels in sc.FAMILY_LEVELS.items():
+        n = len(levels)
+        fam_hc = hc_year.get(f, {})
+        for i, lvl in enumerate(levels):
+            tiers[_tier_of(i, n)] += fam_hc.get(lvl, 0.0)
+    return tiers
+
+
+def shape_silhouette(hc_year: dict[str, dict[str, float]], title: str,
+                     color: str) -> go.Figure:
+    tiers = tier_distribution(hc_year)
+    vals = [tiers[t] for t in TIER_ORDER]
+    fig = go.Figure(go.Bar(
+        y=TIER_ORDER, x=vals, base=[-v / 2 for v in vals],
+        orientation="h", marker_color=color, width=0.72,
+        text=[f"{v:,.0f}명" for v in vals], textposition="outside",
+        cliponaxis=False, hovertemplate="%{y} %{x:,.0f}명<extra></extra>",
+    ))
+    _style(fig, 300, title)
+    _max = max(vals) if vals else 1
+    fig.update_layout(showlegend=False,
+                      xaxis=dict(visible=False, range=[-_max * 0.72, _max * 0.72]))
+    fig.update_yaxes(categoryorder="array", categoryarray=TIER_ORDER,
+                     showgrid=False, title=None)
+    return fig
+
+
 def mini_cost(result: sc.SimResult) -> go.Figure:
     yrs = [year_label(t) for t in range(len(result.labor_cost_by_year))]
     s = [c / 1e8 for c in result.labor_cost_by_year]
@@ -394,6 +443,20 @@ if SHOW_TABLE:
 else:
     st.plotly_chart(cost_chart(baseline, sim), use_container_width=True,
                     key="cost_chart", config=PLOTLY_CONFIG)
+
+st.markdown("#### 직급 구조 실루엣 — 모래시계 ↔ 피라미드")
+st.caption(f"직급을 상대 위치로 5개 티어(하위→상위)에 묶어 중앙정렬한 실루엣. "
+           f"좌=baseline 현재({BASE_YEAR})는 허리가 얇은 **모래시계형**, "
+           f"우=시뮬 최종연도({BASE_YEAR + years})는 레버 조정 후 형태 변화를 보여줍니다.")
+sil_l, sil_r = st.columns(2)
+with sil_l:
+    st.plotly_chart(shape_silhouette(baseline.headcount_by_year[0],
+                                     f"BASELINE · {BASE_YEAR}(현재)", C_BASE),
+                    use_container_width=True, key="sil_base", config=PLOTLY_CONFIG)
+with sil_r:
+    st.plotly_chart(shape_silhouette(sim.headcount_by_year[-1],
+                                     f"시뮬 · {BASE_YEAR + years}(최종연도)", C_BLUE),
+                    use_container_width=True, key="sil_sim", config=PLOTLY_CONFIG)
 
 with st.expander("최종연도 직군·단계별 인원 상세 (baseline / 시뮬 / Δ)"):
     rows = []
@@ -490,6 +553,20 @@ insight_ctx = {
     "cum_delta_eok": cum_delta / 1e8,
     "top_base": top_base, "top_sim": top_sim,
     "family_end": {f: round(v) for f, v in sc.headcount_by_family(end_sim).items()},
+    # 저장된 스냅샷 요약 — 챗봇이 여러 시나리오를 비교·언급할 수 있게 컨텍스트로 전달.
+    "snapshots": [
+        {
+            "label": s.label,
+            "years": s.controls["years"],
+            "promo_pct": s.controls["promo_pct"],
+            "attr_pct": s.controls["attr_pct"],
+            "raise_pct": s.controls["raise_rate_pct"],
+            "final_total": round(s.final_total),
+            "cum_delta_eok": s.cum_cost_delta / 1e8,
+            "top_share": s.top_share,
+        }
+        for s in st.session_state.get("snapshots", [])
+    ],
 }
 
 if insight_bot.has_api_key():

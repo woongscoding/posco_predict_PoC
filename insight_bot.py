@@ -19,6 +19,23 @@ def has_api_key() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
+def _format_snapshots(snaps: list[dict]) -> str:
+    """저장된 스냅샷 요약을 프롬프트용 텍스트로. 없으면 안내 문구."""
+    if not snaps:
+        return "- 저장된 스냅샷: 없음 (사용자가 '스냅샷 저장'을 누르면 시나리오가 쌓입니다)\n"
+    lines = ["- 저장된 스냅샷(시나리오 비교용):"]
+    for i, s in enumerate(snaps, 1):
+        delta = "baseline" if abs(s.get("cum_delta_eok", 0)) < 0.5 \
+            else f"{s.get('cum_delta_eok', 0):+,.0f}억"
+        lines.append(
+            f"  {i}. '{s.get('label')}' — 레버: 승진 {s.get('promo_pct'):+d}% · "
+            f"퇴직 {s.get('attr_pct'):+d}% · 인상 {s.get('raise_pct'):.2f}% · {s.get('years')}년 / "
+            f"최종총원 {s.get('final_total'):,}명 · 누적인건비Δ {delta} · "
+            f"상위비중 {s.get('top_share'):.1f}%"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def build_system_prompt(ctx: dict) -> str:
     """현재 시뮬 수치를 시스템 프롬프트에 주입(매 턴 최신 값)."""
     fam = " · ".join(f"{f} {v:,}명" for f, v in ctx.get("family_end", {}).items())
@@ -28,6 +45,7 @@ def build_system_prompt(ctx: dict) -> str:
         "승진율·퇴직률·인건비 인상률·채용 같은 레버를 어떻게 조정하면 좋을지 구체적으로 제안하세요.\n"
         "원칙:\n"
         "- 제공된 수치 안에서 이야기하고, 없는 숫자를 지어내지 마세요. 필요하면 '슬라이더를 이렇게 바꿔보라'고 안내하세요.\n"
+        "- 사용자가 저장한 스냅샷(시나리오)들이 아래에 있으면, 그 값들을 근거로 시나리오 간 장단점을 비교해 주세요.\n"
         "- 간결하게. 한 번에 핵심 1~2개 + 다음 액션 제안. 필요하면 되묻는 질문 1개.\n"
         "- 이 데이터는 더미(가정값) 기반 목업임을 감안하세요.\n\n"
         "현재 시뮬 수치:\n"
@@ -40,6 +58,8 @@ def build_system_prompt(ctx: dict) -> str:
         f"- 상위단계 비중: baseline {ctx.get('top_base'):.1f}% → 시뮬 {ctx.get('top_sim'):.1f}% "
         f"(Δ {ctx.get('top_sim', 0) - ctx.get('top_base', 0):+.1f}%p)\n"
         f"- 최종연도 직군별 인원: {fam}\n"
+        f"- 초기 인력구조는 '모래시계형'(하위·상위 두껍고 허리 얇음). 목표는 피라미드형으로의 전환.\n"
+        + _format_snapshots(ctx.get("snapshots", []))
     )
 
 
