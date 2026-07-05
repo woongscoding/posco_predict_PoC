@@ -3,15 +3,14 @@ app.py — POSCO HR 인력운영 시뮬레이터 (v3, 배포 엔트리)
 ==================================================
 승진율 / 퇴직률 / 인건비 인상률을 조정하면 향후 인력 구조와 총 인건비가 어떻게
 변하는지 결정론 마르코프로 추계해 baseline ↔ 시뮬을 좌우로 나란히 비교하고,
-변수 조합을 스냅샷으로 저장·비교한다. LLM·리서치 없음(순수 rule).
+변수 조합을 스냅샷으로 저장·비교한다. LLM 인사이트 챗봇(선택).
 
   - 결정론 코어:   sim_core.py  (직군 4종 P/R/E/A × 단계별 전이 + 인건비)
   - 스냅샷 로직:   snapshots.py (라벨·캡처·비교표, Streamlit 비의존)
-  - 화면(본 파일): 좌우 비교 + 스냅샷 + POSCO 블루 브랜딩
+  - 화면(본 파일): POSCO 블루 리디자인 — 인라인 헤더/KPI 타일/차트 대시보드
 
+계산·데이터·키는 UI 리디자인에서 변경하지 않는다. 렌더 계층만 손댄다.
 실행:  streamlit run app.py
-※ POSCO 로고: assets/posco_logo.(png|svg|jpg) 파일이 있으면 그걸 헤더에 사용하고,
-  없으면 텍스트 워드마크(플레이스홀더)로 대체한다. 공식 로고는 그 경로에 넣으면 된다.
 """
 from __future__ import annotations
 
@@ -32,7 +31,7 @@ import sim_core as sc
 import snapshots as snap
 import insight_bot
 
-st.set_page_config(page_title="POSCO 인력운영 시뮬레이터", layout="wide", page_icon="🔷")
+st.set_page_config(page_title="POSCO HR 시뮬레이터", layout="wide", page_icon="🔷")
 
 # Streamlit Cloud 배포용: Secrets 에 넣은 키를 환경변수로 브리지(insight_bot 은 os.environ 을 읽음).
 try:
@@ -41,89 +40,99 @@ try:
 except Exception:
     pass
 
-# =============================================================
-# 브랜드 팔레트 (푸른색 계열)
-# =============================================================
-POSCO_NAVY = "#003A70"
-POSCO_BLUE = "#0072CE"
-POSCO_CYAN = "#00A3E0"
-STEEL_BLUE = "#5B7FA6"
-GRID_GRAY = "#94A3B8"
 
-# 직군 색상 — 전부 블루 계열이면서 서로 구분되게
-FAMILY_COLOR = {"P": POSCO_NAVY, "R": POSCO_BLUE, "E": POSCO_CYAN, "A": STEEL_BLUE}
+# =============================================================
+# 전역 CSS (POSCO 블루 · Pretendard) — 앱 시작 시 1회 주입
+# =============================================================
+POSCO_CSS = """
+<style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+:root{
+  --navy:#002C5F; --blue:#0057B8; --blue-lt:#3E8FE0;
+  --ink:#10233F; --muted:#6B7688; --line:#E1E7F0; --panel:#F4F7FB;
+}
+html, body, [class*="css"]{ font-family:'POSCO','Pretendard',system-ui,sans-serif; color:var(--ink); }
+.stApp{ background:#FFFFFF; }
+
+/* 사이드바 — 네이비 */
+section[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0A2A52,#0E2038); border-right:0; }
+section[data-testid="stSidebar"] *{ color:#C7D5E8; }
+section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3{ color:#fff !important; font-weight:700; }
+section[data-testid="stSidebar"] .stNumberInput input, section[data-testid="stSidebar"] .stTextInput input{
+  background:rgba(255,255,255,.06); color:#fff; border:1px solid rgba(255,255,255,.18);
+  border-radius:9px; font-variant-numeric:tabular-nums; }
+section[data-testid="stSidebar"] .stSlider [role="slider"]{ background:var(--blue-lt); }
+.posco-mark{ display:inline-block; border:1.5px solid rgba(255,255,255,.4); border-radius:6px;
+  padding:6px 12px; color:#fff; font-weight:800; letter-spacing:.04em; }
+
+/* 인라인 헤더 */
+.posco-head{ display:flex; align-items:center; gap:12px; margin:4px 0 6px; }
+.posco-head h1{ font-size:24px; font-weight:800; margin:0; letter-spacing:-.01em; }
+.posco-badge{ font-size:10.5px; font-weight:700; letter-spacing:.06em; color:var(--blue);
+  border:1px solid #C9DBF2; border-radius:5px; padding:3px 7px; }
+.posco-sub{ color:var(--muted); font-size:13px; margin:2px 2px 10px; }
+
+/* KPI 타일 */
+.kpi-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:18px 0; }
+.kpi{ border-radius:12px; padding:20px; border:1px solid var(--line); background:var(--panel); }
+.kpi.fill{ background:linear-gradient(135deg,#002C5F,#0A4C97); border:0; color:#fff; }
+.kpi .label{ font-size:12px; font-weight:600; color:var(--muted); }
+.kpi.fill .label{ color:#B7CDEA; }
+.kpi .value{ font-size:32px; font-weight:800; letter-spacing:-.02em; margin-top:8px; }
+.kpi .delta{ font-size:11.5px; font-weight:700; margin-top:6px; }
+.kpi .up{ color:#1B8A5A; } .kpi .down{ color:#C33; } .kpi.fill .down{ color:#F3B4B4; }
+.kpi.fill .up{ color:#9BE3C1; }
+
+/* 카드/표/버튼 */
+.card{ border:1px solid var(--line); border-radius:12px; padding:18px 20px; }
+.stDataFrame, [data-testid="stTable"]{ border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+thead tr th{ background:#F4F6FA !important; color:var(--muted) !important; font-weight:600 !important; }
+.stButton>button{ background:#fff; color:var(--ink); border:1px solid #D5DDE8; border-radius:9px;
+  font-weight:700; padding:.5rem 1rem; }
+.stButton>button:hover{ background:var(--blue); color:#fff; border-color:var(--blue); }
+</style>
+"""
+
+
+def inject_css():
+    st.markdown(POSCO_CSS, unsafe_allow_html=True)
+
+
+def render_header():
+    st.markdown(
+        '<div class="posco-head">'
+        '<span class="posco-mark">POSCO</span>'
+        '<h1>HR 인력운영 시뮬레이터</h1>'
+        '<span class="posco-badge">v3 · MOCKUP</span>'
+        '</div>',
+        unsafe_allow_html=True)
+    st.markdown(
+        '<div class="posco-sub">승진율·퇴직률·인건비 인상률을 조정하면 향후 인력 구조와 '
+        '총 인건비 변화를 마르코프로 추계해 baseline과 나란히 보여줍니다. 결정론 rule 계산.</div>',
+        unsafe_allow_html=True)
+
+
+# =============================================================
+# 브랜드 팔레트 (POSCO 블루)
+# =============================================================
+C_NAVY = "#002C5F"
+C_BLUE = "#0057B8"
+C_BLUE_LT = "#3E8FE0"
+C_BLUE_XLT = "#8FBEEE"
+C_BASE = "#B7C2D2"       # baseline 계열(연한 회청)
+C_GRID = "#F2F4F8"
+C_INK = "#10233F"
+FONT_FAMILY = "Pretendard, system-ui, sans-serif"
+
+# 직군 색상 — 명시 지정
+FAMILY_COLOR = {"P": C_NAVY, "R": C_BLUE, "E": C_BLUE_LT, "A": C_BLUE_XLT}
 
 # 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
 SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0, "k_attr": 0, "k_raise": 3.0}
 
 # 차트 클릭 확대/툴바 끄기 (정적 표시) — 축 fixedrange 와 함께 줌·팬 차단
 PLOTLY_CONFIG = {"displayModeBar": False, "staticPlot": False, "scrollZoom": False}
-
-
-# =============================================================
-# 브랜드 헤더 + CSS
-# =============================================================
-def _find_logo() -> str | None:
-    for name in ("posco_logo.png", "posco_logo.svg", "posco_logo.jpg"):
-        p = os.path.join("assets", name)
-        if os.path.exists(p):
-            return p
-    return None
-
-
-def render_brand_header():
-    st.markdown(
-        """
-        <style>
-        .posco-header{
-            background:linear-gradient(90deg,#003A70 0%,#0072CE 100%);
-            border-radius:14px; padding:18px 26px; margin:2px 0 4px 0;
-            display:flex; align-items:center; gap:18px;
-        }
-        .posco-logo{
-            font-family:Arial,Helvetica,sans-serif; font-weight:800; letter-spacing:3px;
-            color:#fff; font-size:28px; line-height:1;
-            border:2px solid rgba(255,255,255,.9); border-radius:8px; padding:7px 14px;
-            white-space:nowrap;
-        }
-        .posco-title{ color:#fff; font-size:22px; font-weight:700; line-height:1.3; }
-        .posco-title .ver{
-            font-size:13px; font-weight:600; opacity:.85; margin-left:8px;
-            background:rgba(255,255,255,.18); padding:2px 8px; border-radius:6px;
-            vertical-align:middle;
-        }
-        .posco-sub{ color:#5b7fa6; font-size:13px; margin:6px 2px 14px 2px; }
-        div[data-testid="stMetricValue"]{ color:#0072CE; font-weight:700; }
-        section[data-testid="stSidebar"]{ border-right:1px solid #d6e4f5; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    logo = _find_logo()
-    if logo:
-        c1, c2 = st.columns([1, 6], vertical_alignment="center")
-        with c1:
-            st.image(logo, use_container_width=True)
-        with c2:
-            st.markdown(
-                '<div class="posco-title">HR 인력운영 시뮬레이터'
-                '<span class="ver">v3 · MOCKUP</span></div>',
-                unsafe_allow_html=True)
-    else:
-        st.markdown(
-            '<div class="posco-header">'
-            '<div class="posco-logo">POSCO</div>'
-            '<div class="posco-title">HR 인력운영 시뮬레이터'
-            '<span class="ver">v3 · MOCKUP</span></div>'
-            '</div>',
-            unsafe_allow_html=True)
-
-    st.markdown(
-        '<div class="posco-sub">승진율·퇴직률·인건비 인상률을 조정하면 향후 인력 구조와 '
-        '총 인건비 변화를 마르코프로 추계해 <b>baseline과 나란히</b> 보여줍니다. '
-        '결정론 rule 계산만 사용 — API 호출 없음.</div>',
-        unsafe_allow_html=True)
 
 
 # =============================================================
@@ -141,37 +150,39 @@ if _pending:
     st.session_state["k_attr"] = int(_pending["attr_pct"])
     st.session_state["k_raise"] = float(_pending["raise_rate_pct"])
 
-render_brand_header()
+inject_css()
+render_header()
 
 
 # =============================================================
-# 사이드바 — 조정 레버 3종 (각 슬라이더에 고정 key)
+# 사이드바 — 조정 레버 (위젯 key/값/스텝 불변)
 # =============================================================
 with st.sidebar:
-    st.header("⚙️ 조정 레버")
+    st.markdown('<span class="posco-mark">POSCO</span>', unsafe_allow_html=True)
+    st.header("조정 레버")
     years = st.slider("추계 연수", 3, 15, step=1, key="k_years")
 
     st.divider()
-    st.subheader("🔼 승진율")
+    st.subheader("승진율")
     promo_pct = st.number_input("승진율 조정 (%, baseline 대비)", min_value=-50, max_value=100,
                                 step=1, key="k_promo",
                                 help="baseline 승진율 대비 배율. +30 이면 승진율 ×1.3. "
                                      "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
 
-    st.subheader("🔽 퇴직률")
+    st.subheader("퇴직률")
     attr_pct = st.number_input("퇴직률 조정 (%, baseline 대비)", min_value=-50, max_value=100,
                                step=1, key="k_attr",
                                help="baseline 퇴직률 대비 배율. -20 이면 퇴직률 ×0.8.")
 
-    st.subheader("💰 인건비 인상률")
+    st.subheader("인건비 인상률")
     raise_rate = st.number_input("연 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
                                  format="%.2f", key="k_raise",
                                  help="직접 기입(예: 3.15). 매년 단가 = 단가×(1+인상률)^연차. "
                                       "인상률은 민감하니 소수점까지 입력하세요(최대 10%).")
 
     st.divider()
-    view_mode = st.radio("결과 보기 방식", ["📋 표(숫자)", "📈 차트"], horizontal=True,
-                         help="표=숫자만 / 차트=클릭 확대 없이 정적으로 표시")
+    view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
+                         help="차트=클릭 확대 없이 정적으로 표시 / 표=숫자만")
 
     st.divider()
     st.caption(
@@ -181,11 +192,11 @@ with st.sidebar:
     )
     st.caption("© POSCO HR PoC · 더미데이터 기반 목업")
 
-SHOW_TABLE = view_mode.startswith("📋")
+SHOW_TABLE = view_mode == "표(숫자)"
 
 
 # =============================================================
-# 계산 — baseline(조정 없음) vs 시뮬(조정 반영)
+# 계산 — baseline(조정 없음) vs 시뮬(조정 반영)   [로직 불변]
 # =============================================================
 @st.cache_data(show_spinner=False)
 def compute(years: int, promo_pct: int, attr_pct: int, raise_rate: float):
@@ -210,8 +221,21 @@ if problems:
 
 
 # =============================================================
-# 차트 헬퍼
+# 차트 헬퍼 (흰 배경 · 연한 그리드 · Pretendard)
 # =============================================================
+def _style(fig: go.Figure, height: int, title: str | None = None) -> go.Figure:
+    fig.update_layout(
+        title=title or None, height=height,
+        margin=dict(t=40 if title else 12, b=10, l=10, r=10),
+        plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
+        font=dict(family=FONT_FAMILY, color=C_INK, size=12),
+        legend=dict(orientation="h", y=-0.2),
+    )
+    fig.update_xaxes(fixedrange=True, gridcolor=C_GRID, zeroline=False)
+    fig.update_yaxes(fixedrange=True, gridcolor=C_GRID, zeroline=False)
+    return fig
+
+
 def area_by_family(result: sc.SimResult, title: str, height: int = 320,
                    showlegend: bool = True) -> go.Figure:
     yrs = list(range(len(result.headcount_by_year)))
@@ -224,12 +248,8 @@ def area_by_family(result: sc.SimResult, title: str, height: int = 320,
             line=dict(width=0.5, color=FAMILY_COLOR[f]),
             hovertemplate=f"{f} %{{y:.0f}}명<extra></extra>",
         ))
-    fig.update_layout(title=title or None, xaxis_title="연차", yaxis_title="인원(명)",
-                      height=height, margin=dict(t=40 if title else 10, b=10, l=10, r=10),
-                      showlegend=showlegend, legend=dict(orientation="h", y=-0.2),
-                      plot_bgcolor="rgba(0,0,0,0)")
-    fig.update_xaxes(fixedrange=True)
-    fig.update_yaxes(fixedrange=True)
+    _style(fig, height, title)
+    fig.update_layout(xaxis_title="연차", yaxis_title="인원(명)", showlegend=showlegend)
     return fig
 
 
@@ -257,20 +277,18 @@ def cost_table(baseline: sc.SimResult, sim: sc.SimResult) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def cost_overlay(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
-    yrs = list(range(len(baseline.labor_cost_by_year)))
+def cost_chart(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
+    """연도별 총 인건비 — baseline vs 시뮬 그룹 막대."""
+    yrs = [str(t) for t in range(len(baseline.labor_cost_by_year))]
     b = [c / 1e8 for c in baseline.labor_cost_by_year]
     s = [c / 1e8 for c in sim.labor_cost_by_year]
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=yrs, y=b, mode="lines+markers", name="baseline",
-                             line=dict(color=GRID_GRAY, width=2)))
-    fig.add_trace(go.Scatter(x=yrs, y=s, mode="lines+markers", name="시뮬",
-                             line=dict(color=POSCO_BLUE, width=3, dash="dash")))
-    fig.update_layout(title="총 인건비 (억원)", xaxis_title="연차", yaxis_title="인건비(억원)",
-                      height=300, margin=dict(t=40, b=10, l=10, r=10),
-                      legend=dict(orientation="h", y=-0.25), plot_bgcolor="rgba(0,0,0,0)")
-    fig.update_xaxes(fixedrange=True)
-    fig.update_yaxes(fixedrange=True)
+    fig.add_bar(x=yrs, y=b, name="baseline", marker_color=C_BASE,
+                hovertemplate="baseline %{y:.0f}억<extra></extra>")
+    fig.add_bar(x=yrs, y=s, name="시뮬", marker_color=C_BLUE,
+                hovertemplate="시뮬 %{y:.0f}억<extra></extra>")
+    _style(fig, 320, "연도별 총 인건비 (억원)")
+    fig.update_layout(barmode="group", xaxis_title="연차", yaxis_title="인건비(억원)")
     return fig
 
 
@@ -278,17 +296,15 @@ def mini_cost(result: sc.SimResult) -> go.Figure:
     yrs = list(range(len(result.labor_cost_by_year)))
     s = [c / 1e8 for c in result.labor_cost_by_year]
     fig = go.Figure(go.Scatter(x=yrs, y=s, mode="lines",
-                               line=dict(color=POSCO_BLUE, width=2)))
-    fig.update_layout(height=140, margin=dict(t=6, b=6, l=6, r=6), showlegend=False,
-                      xaxis_title=None, yaxis_title="억원",
-                      yaxis=dict(title_font=dict(size=10)), plot_bgcolor="rgba(0,0,0,0)")
-    fig.update_xaxes(fixedrange=True)
-    fig.update_yaxes(fixedrange=True)
+                               line=dict(color=C_BLUE, width=2)))
+    _style(fig, 140)
+    fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title="억원",
+                      yaxis=dict(title_font=dict(size=10)))
     return fig
 
 
 # =============================================================
-# Δ 강조 블록 (대형 KPI) + 스냅샷 저장
+# 핵심 차이 KPI 타일 + 스냅샷 저장
 # =============================================================
 end_base = baseline.headcount_by_year[-1]
 end_sim = sim.headcount_by_year[-1]
@@ -298,14 +314,33 @@ top_base = sc.top_level_share(end_base)
 top_sim = sc.top_level_share(end_sim)
 cum_delta = sim.cum_cost_delta_vs_baseline
 
-st.markdown("### 📊 핵심 차이 (Δ vs baseline)")
-k1, k2, k3 = st.columns(3)
-k1.metric(f"{years}년 누적 인건비 Δ", f"{cum_delta/1e8:+,.0f}억",
-          help="시뮬 누적 인건비 − baseline 누적 인건비")
-k2.metric("최종연도 총원", f"{tot_sim:,.0f}명", f"{tot_sim - tot_base:+,.0f}명")
-k3.metric("상위단계 비중", f"{top_sim:.1f}%", f"{top_sim - top_base:+.1f}%p")
+head_gap = tot_sim - tot_base
+top_delta = top_sim - top_base
 
-if st.button("📸 스냅샷 저장"):
+_cost_cls = "down" if cum_delta >= 0 else "up"
+_cost_arrow = "▲" if cum_delta >= 0 else "▼"
+_cost_txt = "인건비 증가 방향" if cum_delta >= 0 else "인건비 감소 방향"
+_head_cls = "up" if head_gap >= 0 else "down"
+_head_arrow = "▲" if head_gap >= 0 else "▼"
+_top_cls = "up" if top_delta >= 0 else "down"
+_top_arrow = "▲" if top_delta >= 0 else "▼"
+
+st.markdown(
+    f'''
+<div class="kpi-row">
+  <div class="kpi fill"><div class="label">{years}년 누적 인건비 Δ (vs baseline)</div>
+    <div class="value">{cum_delta/1e8:+,.0f}억</div>
+    <div class="delta {_cost_cls}">{_cost_arrow} {_cost_txt}</div></div>
+  <div class="kpi"><div class="label">최종연도 총원</div>
+    <div class="value">{tot_sim:,.0f}명</div>
+    <div class="delta {_head_cls}">{_head_arrow} {head_gap:+,.0f}명</div></div>
+  <div class="kpi"><div class="label">상위단계 비중</div>
+    <div class="value">{top_sim:.1f}%</div>
+    <div class="delta {_top_cls}">{_top_arrow} {top_delta:+.1f}%p</div></div>
+</div>''',
+    unsafe_allow_html=True)
+
+if st.button("스냅샷 저장"):
     controls = {"years": int(years), "promo_pct": int(promo_pct),
                 "attr_pct": int(attr_pct), "raise_rate_pct": float(raise_rate)}
     label = snap.make_label(**controls)
@@ -318,10 +353,10 @@ st.divider()
 # =============================================================
 # 좌우 비교 — baseline ↔ 시뮬
 # =============================================================
-st.markdown("### ↔️ baseline ↔ 시뮬 좌우 비교")
+st.markdown("### baseline ↔ 시뮬 좌우 비교")
 left, right = st.columns(2)
 with left:
-    st.markdown("#### ⬅️ BASELINE (조정 없음)")
+    st.markdown("#### BASELINE (조정 없음)")
     if SHOW_TABLE:
         st.caption("연도별 직군 인원 · 총원")
         st.dataframe(headcount_table(baseline), use_container_width=True, hide_index=True)
@@ -329,7 +364,7 @@ with left:
         st.plotly_chart(area_by_family(baseline, "인력 구조 (직군 누적)"),
                         use_container_width=True, key="area_base", config=PLOTLY_CONFIG)
 with right:
-    st.markdown("#### ➡️ 시뮬레이션 (조정 반영)")
+    st.markdown("#### 시뮬레이션 (조정 반영)")
     if SHOW_TABLE:
         st.caption("연도별 직군 인원 · 총원")
         st.dataframe(headcount_table(sim), use_container_width=True, hide_index=True)
@@ -341,10 +376,10 @@ st.markdown("#### 총 인건비 (baseline vs 시뮬)")
 if SHOW_TABLE:
     st.dataframe(cost_table(baseline, sim), use_container_width=True, hide_index=True)
 else:
-    st.plotly_chart(cost_overlay(baseline, sim), use_container_width=True,
-                    key="cost_overlay", config=PLOTLY_CONFIG)
+    st.plotly_chart(cost_chart(baseline, sim), use_container_width=True,
+                    key="cost_chart", config=PLOTLY_CONFIG)
 
-with st.expander("🔍 최종연도 직군·단계별 인원 상세 (baseline / 시뮬 / Δ)"):
+with st.expander("최종연도 직군·단계별 인원 상세 (baseline / 시뮬 / Δ)"):
     rows = []
     for f in sc.FAMILY_LEVELS:
         for lvl in sc.FAMILY_LEVELS[f]:
@@ -356,14 +391,14 @@ with st.expander("🔍 최종연도 직군·단계별 인원 상세 (baseline / 
 
 
 # =============================================================
-# 📸 스냅샷 저장·비교 (M3)
+# 스냅샷 저장·비교 (M3)
 # =============================================================
 st.divider()
-st.markdown("## 📸 스냅샷 저장·비교")
+st.markdown("## 스냅샷 저장·비교")
 snaps: list[snap.Snapshot] = st.session_state["snapshots"]
 
 if not snaps:
-    st.info("아직 저장된 스냅샷이 없습니다. 슬라이더를 조정하고 위의 **[📸 스냅샷 저장]** 을 "
+    st.info("아직 저장된 스냅샷이 없습니다. 레버를 조정하고 위의 [스냅샷 저장] 을 "
             "누르면 여러 변수 조합을 나란히 비교할 수 있습니다. "
             "조정 없이 저장하면 'baseline' 기준선 스냅샷이 됩니다.")
 else:
@@ -395,7 +430,7 @@ else:
 
     st.markdown("#### 비교표")
     st.dataframe(snap.comparison_table(snaps), use_container_width=True, hide_index=True)
-    st.caption("※ 누적 Δ는 각 스냅샷의 **자기 horizon** 무조정 baseline 대비입니다. "
+    st.caption("※ 누적 Δ는 각 스냅샷의 자기 horizon 무조정 baseline 대비입니다. "
                "'연수'가 다른 행은 기준 horizon 이 달라 절대 Δ를 직접 비교하지 마세요. "
                "baseline 스냅샷(조정 없음)의 Δ는 '—' 로 표기됩니다.")
 
@@ -427,12 +462,11 @@ else:
 
 
 # =============================================================
-# 💬 대화형 인사이트 챗봇 (Claude, 메모리 유지 / 키 없으면 rule 폴백)
+# 대화형 인사이트 챗봇 (Claude, 메모리 유지 / 키 없으면 rule 폴백)
 # =============================================================
 st.divider()
-st.markdown("### 💬 인사이트 챗봇")
+st.markdown("### 인사이트 챗봇")
 
-# 현재 시뮬 수치를 매 턴 컨텍스트로 주입
 insight_ctx = {
     "years": int(years), "promo_pct": int(promo_pct), "attr_pct": int(attr_pct),
     "raise_rate": float(raise_rate),
@@ -443,9 +477,9 @@ insight_ctx = {
 }
 
 if insight_bot.has_api_key():
-    st.caption("🟢 Claude 대화 모드 — 현재 시뮬 수치를 근거로 제안·질문하며 대화합니다.")
+    st.caption("Claude 대화 모드 — 현재 시뮬 수치를 근거로 제안·질문하며 대화합니다.")
 else:
-    st.caption("🟡 rule 폴백 모드 — ANTHROPIC_API_KEY 설정 시 Claude 대화가 활성화됩니다.")
+    st.caption("rule 폴백 모드 — ANTHROPIC_API_KEY 설정 시 Claude 대화가 활성화됩니다.")
 
 col_chat, col_clear = st.columns([6, 1])
 with col_clear:
