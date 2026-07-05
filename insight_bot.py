@@ -29,7 +29,7 @@ def _format_snapshots(snaps: list[dict]) -> str:
             else f"{s.get('cum_delta_eok', 0):+,.0f}억"
         lines.append(
             f"  {i}. '{s.get('label')}' — 레버: 승진 {s.get('promo_pct'):+g}% · "
-            f"퇴직 {s.get('attr_pct'):+g}% · 인상 {s.get('raise_pct'):.2f}% · {s.get('years')}년 / "
+            f"퇴직 {s.get('attr_pct'):+g}% · 인상 {s.get('raise_desc')} · {s.get('years')}년 / "
             f"최종총원 {s.get('final_total'):,}명 · 누적인건비Δ {delta} · "
             f"상위비중 {s.get('top_share'):.1f}%"
         )
@@ -51,7 +51,7 @@ def build_system_prompt(ctx: dict) -> str:
         "현재 시뮬 수치:\n"
         f"- 추계 연수: {ctx.get('years')}년\n"
         f"- 조정 레버: 승진율 {ctx.get('promo_pct'):+g}% · 퇴직률 {ctx.get('attr_pct'):+g}% · "
-        f"인건비 인상률 {ctx.get('raise_rate'):.2f}%\n"
+        f"인건비 인상률(직급 티어별) {ctx.get('raise_desc')}\n"
         f"- 최종연도 총원: baseline {ctx.get('tot_base'):,.0f}명 → 시뮬 {ctx.get('tot_sim'):,.0f}명 "
         f"(Δ {ctx.get('tot_sim', 0) - ctx.get('tot_base', 0):+,.0f}명)\n"
         f"- {ctx.get('years')}년 누적 인건비 Δ(vs baseline): {ctx.get('cum_delta_eok'):+,.0f}억\n"
@@ -88,7 +88,7 @@ def rule_reply(messages: list[dict], ctx: dict) -> str:
     direction = "증가" if cum >= 0 else "감소"
     return (
         f"(rule 모드) 현재 조정(승진율 {ctx.get('promo_pct'):+g}% · 퇴직률 {ctx.get('attr_pct'):+g}% · "
-        f"인상률 {ctx.get('raise_rate'):.2f}%) 기준으로 **{ctx.get('years')}년 후 총원 "
+        f"인상률 {ctx.get('raise_desc')}) 기준으로 **{ctx.get('years')}년 후 총원 "
         f"{ctx.get('tot_sim'):,.0f}명**(baseline 대비 {tot_d:+,.0f}명), "
         f"누적 인건비는 baseline 대비 **{cum:+,.0f}억 {direction}**, "
         f"상위단계 비중 {top_d:+.1f}%p 변동입니다.\n\n"

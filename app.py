@@ -43,6 +43,46 @@ def year_label(t: int) -> str:
     """연차 t → 실제 연도 문자열. 기준연(t=0)은 '올해' 표기."""
     return f"{BASE_YEAR}(기준)" if t == 0 else str(BASE_YEAR + t)
 
+
+# =============================================================
+# 직급 티어(하위→상위) — 실루엣 표시 + 직급별 인상률 입력에 공용으로 쓴다.
+#   직군마다 단계 수가 달라(3~7단계), 각 단계의 '상대 위치'로 5개 티어에 매핑.
+# =============================================================
+TIER_ORDER = ["하위", "중하", "중위", "중상", "상위"]  # 아래→위
+
+
+def _tier_of(i: int, n: int) -> str:
+    p = i / (n - 1) if n > 1 else 0.5
+    if p < 0.2:
+        return "하위"
+    if p < 0.4:
+        return "중하"
+    if p < 0.6:
+        return "중위"
+    if p < 0.8:
+        return "중상"
+    return "상위"
+
+
+def build_raise_by_level(tier_raise_pct: dict[str, float]) -> dict[str, dict[str, float]]:
+    """티어별 인상률(%) → {직군:{단계:인상률(소수)}}. 각 단계는 소속 티어값을 받는다."""
+    out: dict[str, dict[str, float]] = {}
+    for f, levels in sc.FAMILY_LEVELS.items():
+        n = len(levels)
+        out[f] = {lvl: tier_raise_pct.get(_tier_of(i, n), 0.0) / 100.0
+                  for i, lvl in enumerate(levels)}
+    return out
+
+
+def raise_summary(rbt: dict[str, float]) -> str:
+    """티어별 인상률(%)을 짧게 요약. 전부 같으면 'X%', 다르면 0 아닌 티어만 나열."""
+    vals = [rbt.get(t, 0.0) for t in TIER_ORDER]
+    if all(abs(v - vals[0]) < 1e-9 for v in vals):
+        return f"{vals[0]:g}%"
+    parts = [f"{t} {rbt.get(t, 0.0):g}%" for t in TIER_ORDER if abs(rbt.get(t, 0.0)) > 1e-9]
+    return "티어별(" + " · ".join(parts) + ")" if parts else "0%"
+
+
 # Streamlit Cloud 배포용: Secrets 에 넣은 키를 환경변수로 브리지(insight_bot 은 os.environ 을 읽음).
 try:
     if "ANTHROPIC_API_KEY" in st.secrets and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -143,7 +183,10 @@ FONT_FAMILY = "Pretendard, system-ui, sans-serif"
 FAMILY_COLOR = {"P": C_NAVY, "R": C_BLUE, "E": C_BLUE_LT, "A": C_BLUE_XLT}
 
 # 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
-SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0.0, "k_attr": 0.0, "k_raise": 0.0}
+#   인상률은 직급 티어별(하위→상위) 5개 입력. 기본 0% = baseline과 동일(Δ 0).
+SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0.0, "k_attr": 0.0}
+for _t in TIER_ORDER:
+    SLIDER_DEFAULTS[f"k_raise_{_t}"] = 0.0
 
 # 차트 클릭 확대/툴바 끄기 (정적 표시) — 축 fixedrange 와 함께 줌·팬 차단
 PLOTLY_CONFIG = {"displayModeBar": False, "staticPlot": False, "scrollZoom": False}
@@ -162,7 +205,9 @@ if _pending:
     st.session_state["k_years"] = int(_pending["years"])
     st.session_state["k_promo"] = float(_pending["promo_pct"])
     st.session_state["k_attr"] = float(_pending["attr_pct"])
-    st.session_state["k_raise"] = float(_pending["raise_rate_pct"])
+    _rt = _pending.get("raise_by_tier", {})
+    for _t in TIER_ORDER:
+        st.session_state[f"k_raise_{_t}"] = float(_rt.get(_t, 0.0))
 
 inject_css()
 render_header()
@@ -190,22 +235,28 @@ with st.sidebar:
                                step=0.1, format="%.1f", key="k_attr",
                                help="baseline 퇴직률 대비 배율. -2.5 이면 퇴직률 ×0.975. 소수점 입력 가능.")
 
-    st.subheader("인건비 인상률")
-    raise_rate = st.number_input("연 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
-                                 format="%.2f", key="k_raise",
-                                 help="직접 기입(예: 3.15). 매년 단가 = 단가×(1+인상률)^연차. "
-                                      "baseline은 인상 0% 기준이라, 여기서 올린 만큼 누적 인건비 Δ가 "
-                                      "+로 잡힙니다. 소수점까지 입력 가능(최대 10%).")
+    st.subheader("직급별 연 인상률")
+    st.caption("직급 티어(하위→상위)별로 단가 인상률을 다르게 준다. "
+               "baseline=전 직급 0% 기준이라 올린 만큼 누적 Δ가 +로 잡힘. "
+               "매년 단가=단가×(1+인상률)^연차.")
+    raise_by_tier = {}
+    for _t in TIER_ORDER:
+        raise_by_tier[_t] = st.number_input(
+            f"{_t} 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
+            format="%.2f", key=f"k_raise_{_t}",
+            help="예: 중위(중간관리)만 5%로 올려 이탈 방지 시뮬. 소수점 입력 가능(최대 10%).")
 
     st.divider()
     view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
                          help="차트=클릭 확대 없이 정적으로 표시 / 표=숫자만")
 
     st.divider()
+    _r_min, _r_max = min(raise_by_tier.values()), max(raise_by_tier.values())
+    _r_txt = f"{_r_min:g}%" if _r_min == _r_max else f"{_r_min:g}~{_r_max:g}%"
     st.caption(
         f"승진율 배율 ×{1 + promo_pct/100:.2f} · "
         f"퇴직률 배율 ×{1 + attr_pct/100:.2f} · "
-        f"인상률 {raise_rate:.2f}%"
+        f"인상률 {_r_txt}"
     )
     st.caption("© POSCO HR PoC · 더미데이터 기반 목업")
 
@@ -216,13 +267,15 @@ SHOW_TABLE = view_mode == "표(숫자)"
 # 계산 — baseline(조정 없음) vs 시뮬(조정 반영)   [로직 불변]
 # =============================================================
 @st.cache_data(show_spinner=False)
-def compute(years: int, promo_pct: float, attr_pct: float, raise_rate: float):
+def compute(years: int, promo_pct: float, attr_pct: float, raise_tuple: tuple):
+    # raise_tuple: TIER_ORDER 순서의 티어별 인상률(%). 캐시 키 안정화를 위해 튜플로 받는다.
     base_params = sc.build_default_params(years=years)
-    baseline = sc.run(base_params)
+    baseline = sc.run(base_params)   # baseline = 전 직급 인상 0% 기준선
+    tier_pct = dict(zip(TIER_ORDER, raise_tuple))
     adj = sc.Adjustments(
         promotion_scale=1 + promo_pct / 100.0,
         attrition_scale=1 + attr_pct / 100.0,
-        raise_rate=raise_rate / 100.0,
+        raise_rate_by_level=build_raise_by_level(tier_pct),
     )
     sim_params = sc.apply_adjustments(base_params, adj)
     problems = sc.validate(sim_params)
@@ -230,7 +283,8 @@ def compute(years: int, promo_pct: float, attr_pct: float, raise_rate: float):
     return adj, baseline, sim, problems
 
 
-adj, baseline, sim, problems = compute(years, promo_pct, attr_pct, raise_rate)
+adj, baseline, sim, problems = compute(
+    years, promo_pct, attr_pct, tuple(raise_by_tier[_t] for _t in TIER_ORDER))
 
 if problems:
     st.error("정합성 위반(계산 중단):\n" + "\n".join(problems))
@@ -310,25 +364,7 @@ def cost_chart(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
 
 
 # --- 직급 구조 실루엣 (모래시계 ↔ 피라미드) --------------------------------
-# 직군마다 단계 수가 달라(3~7단계) 직접 겹칠 수 없으므로, 각 단계의 '상대 위치'로
-# 5개 티어(하위→상위)에 합산한다. 중앙정렬 가로막대로 그리면 폭의 넓고좁음이
-# 그대로 조직 실루엣이 된다 — 허리가 얇으면 모래시계, 위로 갈수록 좁아지면 피라미드.
-TIER_ORDER = ["하위", "중하", "중위", "중상", "상위"]  # 아래→위
-
-
-def _tier_of(i: int, n: int) -> str:
-    p = i / (n - 1) if n > 1 else 0.5
-    if p < 0.2:
-        return "하위"
-    if p < 0.4:
-        return "중하"
-    if p < 0.6:
-        return "중위"
-    if p < 0.8:
-        return "중상"
-    return "상위"
-
-
+# TIER_ORDER / _tier_of 는 사이드바(인상률 티어 입력)보다 먼저 필요해 상단에 정의됨.
 def tier_distribution(hc_year: dict[str, dict[str, float]]) -> dict[str, float]:
     tiers = {t: 0.0 for t in TIER_ORDER}
     for f, levels in sc.FAMILY_LEVELS.items():
@@ -408,7 +444,7 @@ st.markdown(
 
 if st.button("스냅샷 저장"):
     controls = {"years": int(years), "promo_pct": float(promo_pct),
-                "attr_pct": float(attr_pct), "raise_rate_pct": float(raise_rate)}
+                "attr_pct": float(attr_pct), "raise_by_tier": dict(raise_by_tier)}
     label = snap.make_label(**controls)
     st.session_state["snapshots"].append(snap.capture(label, controls, adj, sim))
     st.toast(f"스냅샷 저장: {label}")
@@ -499,7 +535,7 @@ else:
         with c_info:
             c = s.controls
             st.caption(f"연수 {c['years']} · 승진 {c['promo_pct']:+g}% · "
-                       f"퇴직 {c['attr_pct']:+g}% · 인상 {c['raise_rate_pct']:g}%")
+                       f"퇴직 {c['attr_pct']:+g}% · 인상 {raise_summary(c.get('raise_by_tier', {}))}")
         with c_restore:
             if st.button("복원", key=f"restore_{s.snapshot_id}", use_container_width=True):
                 st.session_state["_pending_restore"] = dict(s.controls)
@@ -551,7 +587,8 @@ st.markdown("### 인사이트 챗봇")
 
 insight_ctx = {
     "years": int(years), "promo_pct": float(promo_pct), "attr_pct": float(attr_pct),
-    "raise_rate": float(raise_rate),
+    "raise_desc": raise_summary(raise_by_tier),
+    "raise_by_tier": {t: raise_by_tier[t] for t in TIER_ORDER},
     "tot_base": tot_base, "tot_sim": tot_sim,
     "cum_delta_eok": cum_delta / 1e8,
     "top_base": top_base, "top_sim": top_sim,
@@ -563,7 +600,7 @@ insight_ctx = {
             "years": s.controls["years"],
             "promo_pct": s.controls["promo_pct"],
             "attr_pct": s.controls["attr_pct"],
-            "raise_pct": s.controls["raise_rate_pct"],
+            "raise_desc": raise_summary(s.controls.get("raise_by_tier", {})),
             "final_total": round(s.final_total),
             "cum_delta_eok": s.cum_cost_delta / 1e8,
             "top_share": s.top_share,

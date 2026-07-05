@@ -51,12 +51,12 @@ class Snapshot:
 # 라벨 자동 생성 (보완 3)
 # =============================================================
 def make_label(years: int, promo_pct: float, attr_pct: float,
-               raise_rate_pct: float) -> str:
+               raise_by_tier: dict[str, float] | None = None) -> str:
     """baseline 과 다른 레버만 골라 라벨 생성. 전부 기본이면 'baseline'.
 
     - 배율 레버(승진율·퇴직률): 기본 대비 증감 %로. 예 '승진 +30%', '퇴직 -20%'.
-      (부호는 파이썬 정수 포맷의 ASCII 하이픈-마이너스 '-' 사용)
-    - 인건비 인상률: rate 그대로, 소수부 없으면 정수로. 예 '인상 5%' (5.0% 아님).
+    - 인건비 인상률: 직급 티어별 dict. 전부 같으면 '인상 X%', 티어별로 다르면
+      0 아닌 티어만 나열('인상 중위 5%·상위 1%'). 전부 0이면 생략.
     - 0 또는 기본값인 레버는 라벨에서 생략.
     """
     parts: list[str] = []
@@ -64,10 +64,14 @@ def make_label(years: int, promo_pct: float, attr_pct: float,
         parts.append(f"승진 {promo_pct:+g}%")
     if abs(attr_pct - DEFAULT_ATTR_PCT) > 1e-9:
         parts.append(f"퇴직 {attr_pct:+g}%")
-    if abs(raise_rate_pct - DEFAULT_RAISE_PCT) > 1e-9:
-        r = raise_rate_pct
-        rtxt = str(int(round(r))) if abs(r - round(r)) < 1e-9 else f"{r:g}"
-        parts.append(f"인상 {rtxt}%")
+    rbt = raise_by_tier or {}
+    vals = list(rbt.values())
+    if vals and any(abs(v) > 1e-9 for v in vals):
+        if all(abs(v - vals[0]) < 1e-9 for v in vals):
+            parts.append(f"인상 {vals[0]:g}%")
+        else:
+            nz = [f"{t} {v:g}%" for t, v in rbt.items() if abs(v) > 1e-9]
+            parts.append("인상 " + "·".join(nz))
     return " / ".join(parts) if parts else "baseline"
 
 

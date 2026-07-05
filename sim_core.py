@@ -41,7 +41,9 @@ class SimParams:
     promotion_rate: dict[str, dict[str, float]]     # 슬라이더 조정 대상
     hiring_plan: dict[str, dict[str, list[float]]]  # {직군:{단계:[연차별 채용수]}}
     years: int = 5
-    raise_rate: float = 0.03                         # 인건비 인상률(슬라이더)
+    raise_rate: float = 0.0                          # 전체 일괄 인상률(폴백용 스칼라)
+    # 직급별(단계별) 연 인상률. 있으면 이게 우선, 없으면 위 스칼라를 전 직급에 동일 적용.
+    raise_rate_by_level: dict[str, dict[str, float]] | None = None
 
     @property
     def families(self) -> list[str]:
@@ -146,6 +148,7 @@ class Adjustments:
     promotion_scale: float = 1.0
     attrition_scale: float = 1.0
     raise_rate: float | None = None
+    raise_rate_by_level: dict[str, dict[str, float]] | None = None  # 직급별 인상률(있으면 우선)
     promotion_scale_by_family: dict[str, float] = field(default_factory=dict)
     attrition_scale_by_family: dict[str, float] = field(default_factory=dict)
 
@@ -154,6 +157,7 @@ class Adjustments:
             abs(self.promotion_scale - 1.0) < 1e-9
             and abs(self.attrition_scale - 1.0) < 1e-9
             and self.raise_rate is None
+            and not self.raise_rate_by_level
             and not self.promotion_scale_by_family
             and not self.attrition_scale_by_family
         )
@@ -188,6 +192,9 @@ def apply_adjustments(base: SimParams, adj: Adjustments) -> SimParams:
         attrition_rate=attrition,
         promotion_rate=promotion,
         raise_rate=base.raise_rate if adj.raise_rate is None else adj.raise_rate,
+        raise_rate_by_level=(adj.raise_rate_by_level
+                             if adj.raise_rate_by_level is not None
+                             else base.raise_rate_by_level),
     )
 
 
@@ -270,21 +277,31 @@ def simulate(params: SimParams) -> list[dict[str, dict[str, float]]]:
 # =============================================================
 # 인건비 (인상률 변수 반영) §6
 # =============================================================
+def _raise_for(raise_spec, f: str, lvl: str) -> float:
+    """raise_spec 이 직급별 dict 면 해당 (직군,단계) 값을, 스칼라면 그 값을 반환."""
+    if isinstance(raise_spec, dict):
+        return raise_spec.get(f, {}).get(lvl, 0.0)
+    return raise_spec
+
+
 def labor_cost_of_year(headcount_year: dict[str, dict[str, float]],
                        salary: dict[str, dict[str, float]],
-                       raise_rate: float, t: int) -> float:
+                       raise_spec, t: int) -> float:
+    """raise_spec: float(전 직급 동일) 또는 {직군:{단계:인상률}} 직급별."""
     total = 0.0
     for f, levels in headcount_year.items():
         for lvl, headcount in levels.items():
-            unit = salary[f][lvl] * (1.0 + raise_rate) ** t   # §A8
+            unit = salary[f][lvl] * (1.0 + _raise_for(raise_spec, f, lvl)) ** t   # §A8
             total += headcount * unit
     return total
 
 
 def labor_cost_series(history: list[dict[str, dict[str, float]]],
                       params: SimParams) -> list[float]:
+    # 직급별 인상률이 있으면 우선 적용, 없으면 스칼라 raise_rate 를 전 직급에 동일 적용.
+    raise_spec = params.raise_rate_by_level or params.raise_rate
     return [
-        labor_cost_of_year(history[t], params.annual_salary, params.raise_rate, t)
+        labor_cost_of_year(history[t], params.annual_salary, raise_spec, t)
         for t in range(params.years + 1)
     ]
 
