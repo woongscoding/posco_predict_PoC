@@ -1,0 +1,8 @@
+# POSCO 인력운영 시뮬레이터 — 푸른색 계열 브랜드 테마
+[theme]
+base = "light"
+primaryColor = "#0072CE"            # POSCO 계열 블루 (버튼·슬라이더·강조)
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EAF2FB"  # 사이드바·카드 배경(연한 블루)
+textColor = "#0A2540"               # 네이비 텍스트
+font = "sans serif"

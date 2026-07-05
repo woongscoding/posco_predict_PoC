@@ -1,423 +1,358 @@
 """
-app.py — 선제적 인력 예측 PoC (Streamlit 메인)
+app.py — POSCO HR 인력운영 시뮬레이터 (v3, 배포 엔트리)
 ==================================================
-UX 흐름 (과정의 시각화가 핵심):
-  입력 → [예측 실행] → 단계별 진행이 눈에 보이게:
-    Stage 0 더미생성 → Stage 1 SQLite·전처리 → Stage 2 마르코프(내부 트랙)
-    Stage 3 외부 리서치 에이전트(외부 트랙, 좌우 2컬럼으로 병렬 연출)
-    Stage 4 행렬 재조정 → Stage 5 시나리오 비교 → Stage 6 보고서
+승진율 / 퇴직률 / 인건비 인상률을 조정하면 향후 인력 구조와 총 인건비가 어떻게
+변하는지 결정론 마르코프로 추계해 baseline ↔ 시뮬을 좌우로 나란히 비교하고,
+변수 조합을 스냅샷으로 저장·비교한다. LLM·리서치 없음(순수 rule).
+
+  - 결정론 코어:   sim_core.py  (직군 4종 P/R/E/A × 단계별 전이 + 인건비)
+  - 스냅샷 로직:   snapshots.py (라벨·캡처·비교표, Streamlit 비의존)
+  - 화면(본 파일): 좌우 비교 + 스냅샷 + POSCO 블루 브랜딩
 
 실행:  streamlit run app.py
-키 없어도 끝까지 도는 목업 폴백 포함.
+※ POSCO 로고: assets/posco_logo.(png|svg|jpg) 파일이 있으면 그걸 헤더에 사용하고,
+  없으면 텍스트 워드마크(플레이스홀더)로 대체한다. 공식 로고는 그 경로에 넣으면 된다.
 """
-
 from __future__ import annotations
+
 import os
-import time
+
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
-# .env 파일에서 ANTHROPIC_API_KEY 등을 환경변수로 로드 (로컬 모듈 import 전에 실행)
-from dotenv import load_dotenv
-load_dotenv()
+import sim_core as sc
+import snapshots as snap
 
-# Streamlit Cloud 배포용: Secrets에 넣은 키를 환경변수로 브리지.
-# (anthropic SDK / 우리 코드는 os.environ 을 읽으므로, st.secrets → os.environ 으로 옮겨줌)
-# 로컬에선 secrets.toml 이 없어 그냥 통과(.env 로딩으로 충분).
-try:
-    for _k in ("ANTHROPIC_API_KEY",):
-        if _k in st.secrets and not os.environ.get(_k):
-            os.environ[_k] = str(st.secrets[_k])
-except Exception:
-    pass
+st.set_page_config(page_title="POSCO 인력운영 시뮬레이터", layout="wide", page_icon="🔷")
 
-import generate_dummy as gd
-import data_pipeline as dp
-import markov as mk
-import viz
-from research_agent import run_research_agent, get_graph_mermaid, _can_run_real
-from report import generate_report
+# =============================================================
+# 브랜드 팔레트 (푸른색 계열)
+# =============================================================
+POSCO_NAVY = "#003A70"
+POSCO_BLUE = "#0072CE"
+POSCO_CYAN = "#00A3E0"
+STEEL_BLUE = "#5B7FA6"
+GRID_GRAY = "#94A3B8"
 
-st.set_page_config(page_title="선제적 인력 예측 PoC", layout="wide", page_icon="📊")
+# 직군 색상 — 전부 블루 계열이면서 서로 구분되게
+FAMILY_COLOR = {"P": POSCO_NAVY, "R": POSCO_BLUE, "E": POSCO_CYAN, "A": STEEL_BLUE}
 
-STEP_PAUSE = 0.4  # 진행감을 주는 짧은 sleep
+# 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
+SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0, "k_attr": 0, "k_raise": 3.0}
 
 
 # =============================================================
-# (선택) 접근 암호 게이트 — 공개 배포 시 API 크레딧 보호용.
-#   Secrets/환경변수에 APP_PASSWORD 가 있으면 활성화, 없으면 그냥 통과(로컬/내부).
+# 브랜드 헤더 + CSS
 # =============================================================
-def _check_access() -> bool:
-    pw = None
-    try:
-        pw = st.secrets.get("APP_PASSWORD")
-    except Exception:
-        pw = None
-    pw = pw or os.environ.get("APP_PASSWORD")
-    if not pw:
-        return True  # 암호 미설정 → 게이트 없음
-    if st.session_state.get("_authed"):
-        return True
-    st.title("🔒 데모 접근 제한")
-    st.caption("공개 링크 보호를 위해 접근 암호가 설정되어 있습니다.")
-    entered = st.text_input("접근 암호", type="password")
-    if entered == pw:
-        st.session_state["_authed"] = True
-        st.rerun()
-    elif entered:
-        st.error("암호가 일치하지 않습니다.")
-    return False
+def _find_logo() -> str | None:
+    for name in ("posco_logo.png", "posco_logo.svg", "posco_logo.jpg"):
+        p = os.path.join("assets", name)
+        if os.path.exists(p):
+            return p
+    return None
 
 
-if not _check_access():
-    st.stop()
+def render_brand_header():
+    st.markdown(
+        """
+        <style>
+        .posco-header{
+            background:linear-gradient(90deg,#003A70 0%,#0072CE 100%);
+            border-radius:14px; padding:18px 26px; margin:2px 0 4px 0;
+            display:flex; align-items:center; gap:18px;
+        }
+        .posco-logo{
+            font-family:Arial,Helvetica,sans-serif; font-weight:800; letter-spacing:3px;
+            color:#fff; font-size:28px; line-height:1;
+            border:2px solid rgba(255,255,255,.9); border-radius:8px; padding:7px 14px;
+            white-space:nowrap;
+        }
+        .posco-title{ color:#fff; font-size:22px; font-weight:700; line-height:1.3; }
+        .posco-title .ver{
+            font-size:13px; font-weight:600; opacity:.85; margin-left:8px;
+            background:rgba(255,255,255,.18); padding:2px 8px; border-radius:6px;
+            vertical-align:middle;
+        }
+        .posco-sub{ color:#5b7fa6; font-size:13px; margin:6px 2px 14px 2px; }
+        div[data-testid="stMetricValue"]{ color:#0072CE; font-weight:700; }
+        section[data-testid="stSidebar"]{ border-right:1px solid #d6e4f5; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-
-# =============================================================
-# 사이드바 — 입력
-# =============================================================
-st.title("📊 선제적 인력 예측 PoC")
-st.caption(
-    "기준연도 → 목표연도 입력 시, 내부 인력데이터를 SQL로 끌어와 전처리하고 "
-    "**마르코프 모델**로 투영하며, 동시에 **외부동향 리서치 에이전트(LangGraph)**로 "
-    "조정계수를 뽑아 시나리오를 재조정하고, 두 시나리오를 비교해 **보고서 초안**까지 생성합니다. "
-    "_이 데모의 핵심은 숫자 정확도가 아니라 **파이프라인이 단계별로 도는 과정**입니다._"
-)
-
-with st.sidebar:
-    st.header("⚙️ 분석 조건")
-    base_year = st.number_input("기준연도", min_value=2020, max_value=2035, value=2026, step=1)
-    target_year = st.number_input("목표연도", min_value=2021, max_value=2045, value=2031, step=1)
-    use_external = st.toggle("외부보정 시나리오 on", value=True)
-
-    st.divider()
-    st.subheader("목표 필요인력(선택)")
-    use_target = st.checkbox("직급별 목표 필요인력 입력")
-    target_required = None
-    if use_target:
-        req_사원 = st.number_input("사원 필요", 0, 10000, 2500, step=100)
-        req_대리 = st.number_input("대리 필요", 0, 10000, 1500, step=100)
-        req_차장 = st.number_input("차장 필요", 0, 10000, 900, step=100)
-        target_required = {"사원": req_사원, "대리": req_대리, "차장": req_차장}
-
-    st.divider()
-    real_mode = _can_run_real()
-    st.markdown(f"**리서치 모드:** {'🟢 real (web search)' if real_mode else '🟡 mock 폴백'}")
-    st.markdown(f"**보고서 모드:** {'🟢 real (LLM)' if os.environ.get('ANTHROPIC_API_KEY') else '🟡 mock 폴백'}")
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        st.info("ANTHROPIC_API_KEY 미설정 — 목업 폴백으로 끝까지 실행됩니다.")
-
-    # ─────────────────────────────────────────────────────────
-    # 데모 전용 설정 — 실데이터 연결 시 사라지는 노브.
-    # 실서비스에선 인력 규모를 '입력'하지 않고 HR 테이블에서 SELECT COUNT(*)로 '조회'한다.
-    # ─────────────────────────────────────────────────────────
-    st.divider()
-    with st.expander("🔧 데모 설정 (실데이터 연결 시 사라짐)"):
-        st.caption(
-            "아래 값은 진짜 HR DB가 없는 데모를 위해 **더미 인력 데이터를 몇 명 규모로 "
-            "생성할지**만 정합니다. 실데이터 연결 시 인력 규모는 입력값이 아니라 "
-            "실제 테이블에서 조회되는 값이므로 이 설정은 제거됩니다."
-        )
-        n_emp = st.slider("더미 인력 규모(명)", 1000, 10000, 6000, step=500,
-                          help="실데이터 교체 시 무관 — 더미 생성 규모만 조절")
-
-    st.divider()
-    run = st.button("🚀 예측 실행", type="primary", use_container_width=True)
-
-# 데이터 명세서 / 그래프 구조는 항상 열람 가능
-with st.expander("📑 데이터 명세서 (실데이터 전환 설계도)"):
-    st.markdown("""
-| 항목 | 실데이터 출처(가정) | 데모 더미 생성 방식 |
-|---|---|---|
-| 전이 카운트 | HR 시스템 인사이동 이력 테이블 | `generate_dummy.py` 가정값(전이확률 상수) |
-| 초기 인력벡터 | 재직자 현황 스냅샷 | 초기 상태 분포 상수(`INITIAL_STATE_MIX`) |
-| 조정계수 | 외부 리서치 → 전문가 검토 | LangGraph 에이전트 추출 / 매핑 테이블 상수 |
-| 목표 필요인력 | 사업계획·조직설계 | 사이드바 수기 입력 |
-
-> 목적: PoC를 '장난감'이 아니라 **'실데이터 전환 설계도'**로 제시. 교체 지점은 `generate_dummy.py`/`data_pipeline.py`의 SQL.
-""")
-
-if target_year <= base_year:
-    st.error("목표연도는 기준연도보다 커야 합니다.")
-    st.stop()
-
-# =============================================================
-# 실행/재현 결정
-#   ★ Streamlit 은 다운로드 버튼·사이드바 조작에도 스크립트를 rerun 한다.
-#     연산은 [예측 실행]을 누른 경우에만 수행해 결과를 session_state 에 저장하고,
-#     이후 rerun 에선 저장된 결과를 '다시 그리기'만 한다. (보고서 다운로드를 눌러도
-#     6단계 출력이 사라지지 않게 — 데모 중 화면 리셋 방지.)
-# =============================================================
-prev = st.session_state.get("results")
-cur_params = {
-    "base_year": int(base_year), "target_year": int(target_year),
-    "use_external": bool(use_external),
-    "target_required": target_required, "n_emp": int(n_emp),
-}
-
-if run:
-    compute = True
-elif prev is not None:
-    compute = False
-else:
-    st.info("👈 사이드바에서 조건을 설정하고 **[예측 실행]**을 눌러주세요.")
-    st.stop()
-
-# 재현 모드인데 사이드바 입력이 직전 실행과 달라졌으면 안내(표시값은 직전 실행 기준)
-if not compute and prev.get("params") != cur_params:
-    st.warning("입력이 바뀌었습니다 — 아래는 **직전 실행 결과**입니다. "
-               "**[예측 실행]**을 다시 누르면 새 조건으로 갱신됩니다.")
-
-# 결과 컨테이너 R: compute 면 새로 채우고, 재현이면 저장본을 읽는다.
-R = {} if compute else dict(prev)
-# 표시·연산에 쓰는 파라미터는 '실행 시점' 값으로 고정 (재현 시 사이드바 변경에 흔들리지 않게)
-params = cur_params if compute else prev.get("params", cur_params)
-if compute:
-    R["params"] = params
-by, ty = params["base_year"], params["target_year"]
-use_ext, treq, nemp = params["use_external"], params["target_required"], params["n_emp"]
-
-
-def pause():
-    """진행감용 sleep — 실제 연산(compute) 때만. 재현 시엔 즉시 렌더."""
-    if compute:
-        time.sleep(STEP_PAUSE)
-
-
-# ---------- Stage 0: 더미 생성 ----------
-df = None  # compute 때만 채워져 Stage 1 까지 사용 (세션엔 미리보기/요약만 저장)
-with st.status("**Stage 0 — 더미 인력 '이력 패널' 생성** (개인 단위, 2020~기준연도)", expanded=True) as s0:
-    if compute:
-        st.write(f"개인 단위 인사이동 이력 생성 중… ({gd.START_YEAR}~{by}, 실데이터에선 HR 추출로 교체)")
-        df = gd.generate_dummy(n=nemp, start_year=gd.START_YEAR, end_year=by)
-        pause()
-        R["df_head"] = df.head(10)
-        R["df_len"] = int(len(df))
-        R["df_cols"] = list(df.columns)
-        R["n_years"] = int(df["관측연도"].nunique())
-    st.write(f"✅ 총 **{R['df_len']:,}건**의 전이 관측 (재직 ~{nemp:,}명 × {R['n_years']}개 관측연도). "
-             f"컬럼: `{', '.join(R['df_cols'])}`")
-    st.caption("1행 = 한 직원이 '관측연도'에 가진 상태(현재상태)와 그 다음 해 상태(다음연도_상태) = 인사이동 1건")
-    st.dataframe(R["df_head"], use_container_width=True)
-    s0.update(label=f"**Stage 0 — 이력 패널 생성 완료 ({R['df_len']:,}건 / {R['n_years']}개 연도)**",
-              state="complete", expanded=False)
-
-
-# ---------- Stage 1: SQLite 적재 · SQL 조회 · 전처리 ----------
-with st.status("**Stage 1 — 내부데이터 수집·전처리** (SQLite + SQL + pandas)", expanded=True) as s1:
-    if compute:
-        st.write("in-memory SQLite에 적재 중…")
-        conn = dp.load_to_sqlite(df)
-        pause()
-        R["raw_preview"] = dp.run_query(conn, dp.SELECT_RAW)
-        R["byyear_preview"] = dp.run_query(conn, dp.SELECT_BY_YEAR)
-        clean = dp.preprocess(df)
-        R["n_clean"] = int(len(clean))
-        R["n_removed"] = int(R["df_len"] - len(clean))
-        R["counts"] = dp.build_transition_counts(clean)
-        R["n0"] = dp.get_initial_headcount(clean, by)
-    counts, n0 = R["counts"], R["n0"]
-
-    st.markdown("**① 실제 SELECT 쿼리로 데이터 조회** (SQL로 끌어오는 과정 시연)")
-    st.code(dp.SELECT_RAW.strip(), language="sql")
-    st.dataframe(R["raw_preview"], use_container_width=True)
-
-    st.markdown("**② 관측연도별 이력 분포** (2020~기준연도 여러 해가 쌓인 패널)")
-    st.code(dp.SELECT_BY_YEAR.strip(), language="sql")
-    st.dataframe(R["byyear_preview"], use_container_width=True)
-
-    st.markdown("**③ pandas 전처리** (상태 라벨링·결측/이상치 정리)")
-    st.write(f"전처리 후 {R['n_clean']:,}행 (제거 {R['n_removed']:,}행)")
-
-    st.markdown("**④ 전이 집계** (`GROUP BY 현재상태 → 다음연도_상태`, 전 연도 풀링)")
-    st.code(dp.SELECT_TRANSITIONS.strip(), language="sql")
-    st.dataframe(counts, use_container_width=True)
-    st.caption("↑ 전이 카운트 행렬 (행=현재상태, 열=다음연도 상태) — 여러 관측연도를 합산해 표본 확보")
-    s1.update(label="**Stage 1 — 수집·전처리 완료**", state="complete", expanded=False)
-
-
-# ---------- 내부/외부 트랙 — 좌우 2컬럼 (병렬 연출) ----------
-st.markdown("## 🔀 병렬 트랙 — 내부 모델링 ↔ 외부 리서치")
-col_in, col_out = st.columns(2)
-
-# ===== 내부 트랙: Stage 2 마르코프 =====
-with col_in:
-    st.markdown("### 🏢 내부 트랙 — 마르코프 모델링")
-    with st.status("Stage 2 — 전이행렬 추정·투영", expanded=True) as s2:
-        st.write("전이카운트 → 행 정규화 + 라플라스 평활(+0.5)로 P 추정…")
-        if compute:
-            R["P_base"] = mk.estimate_transition_matrix(counts)
-        P_base = R["P_base"]
-        pause()
-        st.plotly_chart(viz.heatmap_matrix(P_base, "전이확률 행렬 P (Baseline)"),
-                        use_container_width=True)
-        st.caption("라플라스 평활: 표본 적을 때 0 관측 전이를 0%로 박제하지 않게 하는 안정화 장치.")
-
-        st.write(f"인력벡터 투영: n(t+1)=n(t)·P 를 {by}→{ty} 반복…")
-        if compute:
-            R["proj_base"] = mk.project(n0, P_base, by, ty)
-        proj_base = R["proj_base"]
-        pause()
-        st.plotly_chart(viz.line_total(proj_base), use_container_width=True)
-        st.plotly_chart(viz.bar_by_rank(proj_base), use_container_width=True)
-        st.caption("⚠️ 마르코프 무기억성 가정 — 실제 이탈은 근속·연령 영향. 본 모델은 근속밴드 상태로 부분 보완.")
-        st.caption("ℹ️ 본 투영은 **현 인력 stock의 '자연 감쇠' 기준선**입니다 — 신규채용 유입 항은 모델에 없어 "
-                   "총원이 단조 감소합니다(차장 누수를 또렷이 보이게 하려는 의도). 채용은 갭에 대응하는 "
-                   "별도 레버로 다룹니다(로드맵: `n(t+1)=n(t)·P + 채용벡터(t)`).")
-        s2.update(label="Stage 2 — 내부 베이스라인 완료", state="complete", expanded=True)
-
-# ===== 외부 트랙: Stage 3 리서치 에이전트 =====
-with col_out:
-    st.markdown("### 🌐 외부 트랙 — 리서치 에이전트 (LangGraph)")
-    with st.status("Stage 3 — 검색→평가→재검색 루프→추출", expanded=True) as s3:
-        with st.expander("🧩 에이전트 그래프 구조 (mermaid)"):
-            st.code(get_graph_mermaid(), language="mermaid")
-
-        st.markdown("**실시간 검증 로그**")
-        log_box = st.container()
-        keyword = "철강·제조 인력시장, AI 도입, 정년·신규채용 동향, 경력직 이직률"
-        st.caption(f"검색 키워드: _{keyword}_")
-
-        if compute:
-            logs: list[str] = []
-
-            def emit(ev: dict):
-                # 노드 실행마다 실시간 로그 카드 갱신
-                logs.append(ev.get("message", str(ev)))
-                with log_box:
-                    st.write(ev.get("message", str(ev)))
-                time.sleep(STEP_PAUSE)
-
-            R["research"] = run_research_agent(keyword, use_real=None, emit=emit)
-            R["logs"] = logs
-        else:
-            # 재현: 저장된 로그를 그대로 다시 출력
-            with log_box:
-                for m in R.get("logs", []):
-                    st.write(m)
-        research = R["research"]
-
-        st.markdown(f"**모드:** `{research['mode']}`")
-        if research["history"]:
-            # 3축 루브릭 채점(정량성/방향성/커버리지 + 종합) — 어느 축이 부족했는지 가시화
-            st.plotly_chart(viz.eval_rubric_chart(research["history"]),
-                            use_container_width=True)
-            best_round = research.get("best_round")
-            st.plotly_chart(viz.eval_score_bar(research["history"], best_round),
-                            use_container_width=True)
-            if best_round is not None:
-                best_h = next((h for h in research["history"]
-                               if h["round"] == best_round), None)
-                if best_h:
-                    st.caption(
-                        f"🏆 최고점 **{best_round}회차({best_h['score']}점)** 결과로 "
-                        f"조정계수를 추출했습니다 — 마지막 라운드가 더 낮아도 최고 라운드를 사용.")
-
-            # refine 노드가 생성한 보강 쿼리를 라운드별로 표시
-            refine_rows = [
-                {"라운드": f"{h['round']}회차",
-                 "부족 항목(missing)": ", ".join(h.get("missing") or []) or "—",
-                 "보강 쿼리(refine)": " / ".join(h.get("refine_queries") or []) or "—"}
-                for h in research["history"]
-            ]
-            if any(r["보강 쿼리(refine)"] != "—" for r in refine_rows):
-                st.markdown("**🔧 쿼리 보강 이력 (refine 노드 산출물)**")
-                st.dataframe(pd.DataFrame(refine_rows), use_container_width=True,
-                             hide_index=True)
-
-        st.markdown("**산출물 1 — 트렌드 요약 카드**")
-        for t in research["trends"]:
-            st.markdown(f"- **{t.get('name','')}** ({t.get('direction','')}): {t.get('desc','')}")
-
-        st.markdown("**산출물 2 — 조정계수 매핑 테이블** (명시적 시나리오 레버, 블랙박스 아님)")
-        coef_df = pd.DataFrame(research["coefficients"])
-        if not coef_df.empty:
-            coef_df = coef_df.rename(columns={
-                "trend": "외부 트렌드", "from": "영향 전이(from)",
-                "to": "영향 전이(to)", "delta_pp": "조정(%p)"})
-        st.dataframe(coef_df, use_container_width=True)
-        s3.update(label=f"Stage 3 — 리서치 완료 ({research['mode']})", state="complete", expanded=True)
-
-
-# ---------- Stage 4: 행렬 재조정 ----------
-st.markdown("## 🔧 Stage 4 — 행렬 재조정 (외부보정 시나리오)")
-if use_ext:
-    with st.status("조정계수를 P에 적용 → 재정규화 → 재투영", expanded=True) as s4:
-        if compute:
-            R["P_adj"] = mk.adjust_matrix(R["P_base"], research["coefficients"])
-            R["proj_adj"] = mk.project(n0, R["P_adj"], by, ty)
-        P_adj, proj_adj = R["P_adj"], R["proj_adj"]
-        pause()
-        c1, c2 = st.columns(2)
+    logo = _find_logo()
+    if logo:
+        c1, c2 = st.columns([1, 6], vertical_alignment="center")
         with c1:
-            st.plotly_chart(viz.heatmap_matrix(R["P_base"], "조정 전 P (Baseline)"),
-                            use_container_width=True)
+            st.image(logo, use_container_width=True)
         with c2:
-            st.plotly_chart(viz.heatmap_matrix(P_adj, "조정 후 P (Adjusted)"),
-                            use_container_width=True)
-        st.plotly_chart(viz.heatmap_diff(R["P_base"], P_adj), use_container_width=True)
-        st.caption("↑ 어느 전이가 얼마나 바뀌었는지(%p). 대상 셀은 명목 delta_pp 그대로 반영하고 "
-                   "나머지 셀만 비례 조정해 합=1 유지 — 매핑 테이블 값과 diff 히트맵이 일치합니다.")
-        s4.update(label="Stage 4 — 재조정·재투영 완료", state="complete", expanded=True)
-else:
-    st.info("외부보정 토글 OFF — Adjusted = Baseline 으로 처리합니다.")
-    if compute:
-        R["P_adj"] = R["P_base"]
-        R["proj_adj"] = R["proj_base"]
-
-P_base, proj_base = R["P_base"], R["proj_base"]
-P_adj, proj_adj = R["P_adj"], R["proj_adj"]
-
-
-# ---------- Stage 5: 시나리오 비교 (수렴) ----------
-st.markdown("## 🎯 Stage 5 — 두 시나리오 비교 (수렴)")
-with st.status("Baseline vs Adjusted 비교 시각화", expanded=True) as s5:
-    st.plotly_chart(viz.compare_total(proj_base, proj_adj), use_container_width=True)
-    st.plotly_chart(viz.compare_by_rank(proj_base, proj_adj), use_container_width=True)
-    st.markdown("**델타 분해 뷰 — 어느 직급·시점에서 갭이 벌어지는가** (인사이트 핵심)")
-    if use_ext:
-        st.plotly_chart(viz.delta_decomposition(proj_base, proj_adj), use_container_width=True)
+            st.markdown(
+                '<div class="posco-title">HR 인력운영 시뮬레이터'
+                '<span class="ver">v3 · MOCKUP</span></div>',
+                unsafe_allow_html=True)
     else:
-        st.info("외부보정 토글 OFF — Adjusted = Baseline 이라 델타가 전부 0입니다. "
-                "토글을 켜면 외부동향 보정에 따른 직급·시점별 갭이 이 자리에 표시됩니다.")
+        st.markdown(
+            '<div class="posco-header">'
+            '<div class="posco-logo">POSCO</div>'
+            '<div class="posco-title">HR 인력운영 시뮬레이터'
+            '<span class="ver">v3 · MOCKUP</span></div>'
+            '</div>',
+            unsafe_allow_html=True)
 
-    if treq:
-        st.markdown("### 목표 필요인력 대비 갭")
-        by_rank_end = mk.survivors_by_rank(proj_adj).iloc[-1]
-        gcols = st.columns(len(treq))
-        for (rank, req), gc in zip(treq.items(), gcols):
-            proj_val = float(by_rank_end.get(rank, 0))
-            with gc:
-                st.plotly_chart(viz.gap_gauge(req, proj_val, f"{rank}"),
-                                use_container_width=True)
-                short = req - proj_val
-                if short > 0:
-                    st.error(f"**{rank} {short:.0f}명 부족 — 선제 대응 필요**")
-                else:
-                    st.success(f"{rank} 여유 {-short:.0f}명")
-    s5.update(label="Stage 5 — 비교 완료", state="complete", expanded=True)
+    st.markdown(
+        '<div class="posco-sub">승진율·퇴직률·인건비 인상률을 조정하면 향후 인력 구조와 '
+        '총 인건비 변화를 마르코프로 추계해 <b>baseline과 나란히</b> 보여줍니다. '
+        '결정론 rule 계산만 사용 — API 호출 없음.</div>',
+        unsafe_allow_html=True)
 
 
-# ---------- Stage 6: 보고서 초안 ----------
-st.markdown("## 📝 Stage 6 — 보고서 초안 생성")
-with st.status("구조화된 산출물 → LLM(또는 목업) 보고서", expanded=True) as s6:
-    if compute:
-        report_md, rmode = generate_report(
-            proj_base, proj_adj, research["trends"], research["coefficients"],
-            by, ty, treq)
-        R["report_md"], R["rmode"] = report_md, rmode
-    report_md, rmode = R["report_md"], R["rmode"]
-    st.markdown(f"**생성 모드:** `{rmode}`")
-    s6.update(label=f"Stage 6 — 보고서 생성 완료 ({rmode})", state="complete", expanded=True)
+# =============================================================
+# 위젯 생성 '이전' 세션 상태 초기화 + 복원 적용
+#   (Streamlit 제약: 위젯이 만들어진 뒤엔 그 key 의 session_state 를 못 바꾼다)
+# =============================================================
+for _k, _v in SLIDER_DEFAULTS.items():
+    st.session_state.setdefault(_k, _v)
+st.session_state.setdefault("snapshots", [])
 
-# 연산 결과를 세션에 저장 → 다운로드/사이드바 조작으로 rerun 돼도 위 출력이 유지됨
-if compute:
-    st.session_state["results"] = R
+_pending = st.session_state.pop("_pending_restore", None)
+if _pending:
+    st.session_state["k_years"] = int(_pending["years"])
+    st.session_state["k_promo"] = int(_pending["promo_pct"])
+    st.session_state["k_attr"] = int(_pending["attr_pct"])
+    st.session_state["k_raise"] = float(_pending["raise_rate_pct"])
 
-st.markdown("---")
-st.markdown(report_md)
-st.download_button("⬇️ 보고서 다운로드 (.md)", data=report_md,
-                   file_name=f"인력예측보고서_{by}_{ty}.md",
-                   mime="text/markdown")
+render_brand_header()
 
-st.success("✅ 전체 파이프라인 완료 — 더미생성 → SQL조회 → 전처리 → 마르코프 → 외부보정 → 비교 → 보고서")
+
+# =============================================================
+# 사이드바 — 조정 레버 3종 (각 슬라이더에 고정 key)
+# =============================================================
+with st.sidebar:
+    st.header("⚙️ 조정 레버")
+    years = st.slider("추계 연수", 3, 15, step=1, key="k_years")
+
+    st.divider()
+    st.subheader("🔼 승진율")
+    promo_pct = st.slider("승진율 조정", -50, 100, step=5, format="%d%%", key="k_promo",
+                          help="baseline 승진율 대비 배율. +30%면 승진율 ×1.3. "
+                               "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
+
+    st.subheader("🔽 퇴직률")
+    attr_pct = st.slider("퇴직률 조정", -50, 100, step=5, format="%d%%", key="k_attr",
+                         help="baseline 퇴직률 대비 배율. -20%면 퇴직률 ×0.8.")
+
+    st.subheader("💰 인건비 인상률")
+    raise_rate = st.slider("연 인상률", 0.0, 10.0, step=0.5, format="%.1f%%", key="k_raise",
+                           help="매년 단가 = 단가×(1+인상률)^연차")
+
+    st.divider()
+    st.caption(
+        f"승진율 배율 ×{1 + promo_pct/100:.2f} · "
+        f"퇴직률 배율 ×{1 + attr_pct/100:.2f} · "
+        f"인상률 {raise_rate:.1f}%"
+    )
+    st.caption("© POSCO HR PoC · 더미데이터 기반 목업")
+
+
+# =============================================================
+# 계산 — baseline(조정 없음) vs 시뮬(조정 반영)
+# =============================================================
+@st.cache_data(show_spinner=False)
+def compute(years: int, promo_pct: int, attr_pct: int, raise_rate: float):
+    base_params = sc.build_default_params(years=years)
+    baseline = sc.run(base_params)
+    adj = sc.Adjustments(
+        promotion_scale=1 + promo_pct / 100.0,
+        attrition_scale=1 + attr_pct / 100.0,
+        raise_rate=raise_rate / 100.0,
+    )
+    sim_params = sc.apply_adjustments(base_params, adj)
+    problems = sc.validate(sim_params)
+    sim = sc.run(sim_params, baseline_cost=baseline.labor_cost_by_year)
+    return adj, baseline, sim, problems
+
+
+adj, baseline, sim, problems = compute(years, promo_pct, attr_pct, raise_rate)
+
+if problems:
+    st.error("정합성 위반(계산 중단):\n" + "\n".join(problems))
+    st.stop()
+
+
+# =============================================================
+# 차트 헬퍼
+# =============================================================
+def area_by_family(result: sc.SimResult, title: str, height: int = 320,
+                   showlegend: bool = True) -> go.Figure:
+    yrs = list(range(len(result.headcount_by_year)))
+    fig = go.Figure()
+    for f in sc.FAMILY_LEVELS:
+        vals = [sc.headcount_by_family(hc).get(f, 0.0)
+                for hc in result.headcount_by_year]
+        fig.add_trace(go.Scatter(
+            x=yrs, y=vals, mode="lines", stackgroup="one", name=f,
+            line=dict(width=0.5, color=FAMILY_COLOR[f]),
+            hovertemplate=f"{f} %{{y:.0f}}명<extra></extra>",
+        ))
+    fig.update_layout(title=title or None, xaxis_title="연차", yaxis_title="인원(명)",
+                      height=height, margin=dict(t=40 if title else 10, b=10, l=10, r=10),
+                      showlegend=showlegend, legend=dict(orientation="h", y=-0.2),
+                      plot_bgcolor="rgba(0,0,0,0)")
+    return fig
+
+
+def cost_overlay(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
+    yrs = list(range(len(baseline.labor_cost_by_year)))
+    b = [c / 1e8 for c in baseline.labor_cost_by_year]
+    s = [c / 1e8 for c in sim.labor_cost_by_year]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=yrs, y=b, mode="lines+markers", name="baseline",
+                             line=dict(color=GRID_GRAY, width=2)))
+    fig.add_trace(go.Scatter(x=yrs, y=s, mode="lines+markers", name="시뮬",
+                             line=dict(color=POSCO_BLUE, width=3, dash="dash")))
+    fig.update_layout(title="총 인건비 (억원)", xaxis_title="연차", yaxis_title="인건비(억원)",
+                      height=300, margin=dict(t=40, b=10, l=10, r=10),
+                      legend=dict(orientation="h", y=-0.25), plot_bgcolor="rgba(0,0,0,0)")
+    return fig
+
+
+def mini_cost(result: sc.SimResult) -> go.Figure:
+    yrs = list(range(len(result.labor_cost_by_year)))
+    s = [c / 1e8 for c in result.labor_cost_by_year]
+    fig = go.Figure(go.Scatter(x=yrs, y=s, mode="lines",
+                               line=dict(color=POSCO_BLUE, width=2)))
+    fig.update_layout(height=140, margin=dict(t=6, b=6, l=6, r=6), showlegend=False,
+                      xaxis_title=None, yaxis_title="억원",
+                      yaxis=dict(title_font=dict(size=10)), plot_bgcolor="rgba(0,0,0,0)")
+    return fig
+
+
+# =============================================================
+# Δ 강조 블록 (대형 KPI) + 스냅샷 저장
+# =============================================================
+end_base = baseline.headcount_by_year[-1]
+end_sim = sim.headcount_by_year[-1]
+tot_base = sc.total_headcount(end_base)
+tot_sim = sc.total_headcount(end_sim)
+top_base = sc.top_level_share(end_base)
+top_sim = sc.top_level_share(end_sim)
+cum_delta = sim.cum_cost_delta_vs_baseline
+
+st.markdown("### 📊 핵심 차이 (Δ vs baseline)")
+k1, k2, k3 = st.columns(3)
+k1.metric(f"{years}년 누적 인건비 Δ", f"{cum_delta/1e8:+,.0f}억",
+          help="시뮬 누적 인건비 − baseline 누적 인건비")
+k2.metric("최종연도 총원", f"{tot_sim:,.0f}명", f"{tot_sim - tot_base:+,.0f}명")
+k3.metric("상위단계 비중", f"{top_sim:.1f}%", f"{top_sim - top_base:+.1f}%p")
+
+if st.button("📸 스냅샷 저장"):
+    controls = {"years": int(years), "promo_pct": int(promo_pct),
+                "attr_pct": int(attr_pct), "raise_rate_pct": float(raise_rate)}
+    label = snap.make_label(**controls)
+    st.session_state["snapshots"].append(snap.capture(label, controls, adj, sim))
+    st.toast(f"스냅샷 저장: {label}")
+
+st.divider()
+
+
+# =============================================================
+# 좌우 비교 — baseline ↔ 시뮬
+# =============================================================
+st.markdown("### ↔️ baseline ↔ 시뮬 좌우 비교")
+left, right = st.columns(2)
+with left:
+    st.markdown("#### ⬅️ BASELINE (조정 없음)")
+    st.plotly_chart(area_by_family(baseline, "인력 구조 (직군 누적)"),
+                    use_container_width=True, key="area_base")
+with right:
+    st.markdown("#### ➡️ 시뮬레이션 (조정 반영)")
+    st.plotly_chart(area_by_family(sim, "인력 구조 (직군 누적)"),
+                    use_container_width=True, key="area_sim")
+
+st.plotly_chart(cost_overlay(baseline, sim), use_container_width=True, key="cost_overlay")
+
+with st.expander("🔍 최종연도 직군·단계별 인원 상세 (baseline / 시뮬 / Δ)"):
+    rows = []
+    for f in sc.FAMILY_LEVELS:
+        for lvl in sc.FAMILY_LEVELS[f]:
+            b = end_base[f].get(lvl, 0.0)
+            s = end_sim[f].get(lvl, 0.0)
+            rows.append({"직군": f, "단계": lvl,
+                         "baseline": round(b), "시뮬": round(s), "Δ": round(s - b)})
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+# =============================================================
+# 📸 스냅샷 저장·비교 (M3)
+# =============================================================
+st.divider()
+st.markdown("## 📸 스냅샷 저장·비교")
+snaps: list[snap.Snapshot] = st.session_state["snapshots"]
+
+if not snaps:
+    st.info("아직 저장된 스냅샷이 없습니다. 슬라이더를 조정하고 위의 **[📸 스냅샷 저장]** 을 "
+            "누르면 여러 변수 조합을 나란히 비교할 수 있습니다. "
+            "조정 없이 저장하면 'baseline' 기준선 스냅샷이 됩니다.")
+else:
+    st.markdown("#### 저장된 스냅샷")
+    top_bar = st.columns([6, 1])
+    with top_bar[1]:
+        if st.button("전체 지우기", use_container_width=True):
+            st.session_state["snapshots"] = []
+            st.rerun()
+
+    for s in snaps:
+        c_label, c_info, c_restore, c_del = st.columns([4, 3, 1.2, 1.2])
+        with c_label:
+            s.label = st.text_input("라벨", value=s.label, key=f"label_{s.snapshot_id}",
+                                    label_visibility="collapsed")
+        with c_info:
+            c = s.controls
+            st.caption(f"연수 {c['years']} · 승진 {c['promo_pct']:+d}% · "
+                       f"퇴직 {c['attr_pct']:+d}% · 인상 {c['raise_rate_pct']:g}%")
+        with c_restore:
+            if st.button("복원", key=f"restore_{s.snapshot_id}", use_container_width=True):
+                st.session_state["_pending_restore"] = dict(s.controls)
+                st.rerun()
+        with c_del:
+            if st.button("삭제", key=f"del_{s.snapshot_id}", use_container_width=True):
+                st.session_state["snapshots"] = [
+                    x for x in snaps if x.snapshot_id != s.snapshot_id]
+                st.rerun()
+
+    st.markdown("#### 비교표")
+    st.dataframe(snap.comparison_table(snaps), use_container_width=True, hide_index=True)
+    st.caption("※ 누적 Δ는 각 스냅샷의 **자기 horizon** 무조정 baseline 대비입니다. "
+               "'연수'가 다른 행은 기준 horizon 이 달라 절대 Δ를 직접 비교하지 마세요. "
+               "baseline 스냅샷(조정 없음)의 Δ는 '—' 로 표기됩니다.")
+
+    st.markdown("#### 미니차트 (스냅샷별 인력구조 · 인건비)")
+    PER_ROW = 4
+    for start in range(0, len(snaps), PER_ROW):
+        row = snaps[start:start + PER_ROW]
+        cols = st.columns(len(row))
+        for s, col in zip(row, cols):
+            with col:
+                st.markdown(f"**{s.label}**")
+                st.plotly_chart(area_by_family(s.result, "", height=180, showlegend=False),
+                                use_container_width=True, key=f"mini_area_{s.snapshot_id}")
+                st.plotly_chart(mini_cost(s.result), use_container_width=True,
+                                key=f"mini_cost_{s.snapshot_id}")
+
+
+# =============================================================
+# rule 인사이트 (템플릿 문장 — LLM 없음)
+# =============================================================
+st.divider()
+st.markdown("### 💬 인사이트 (rule 템플릿)")
+direction = "증가" if cum_delta >= 0 else "감소"
+st.info(
+    f"**{years}년 후** 총원 **{tot_sim:,.0f}명** "
+    f"(baseline 대비 **{tot_sim - tot_base:+,.0f}명**). "
+    f"누적 인건비는 baseline 대비 **{cum_delta/1e8:+,.0f}억** {direction}. "
+    f"승진율 {promo_pct:+d}% · 퇴직률 {attr_pct:+d}% · 인상률 {raise_rate:.1f}% 조정으로 "
+    f"상위단계 비중이 **{top_sim - top_base:+.1f}%p** 변동했습니다."
+)
+st.caption("※ 인사이트는 순수 rule 템플릿입니다(API 호출 0). LLM 서술은 추후 토글로 추가 예정.")
