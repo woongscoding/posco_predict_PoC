@@ -143,7 +143,7 @@ FONT_FAMILY = "Pretendard, system-ui, sans-serif"
 FAMILY_COLOR = {"P": C_NAVY, "R": C_BLUE, "E": C_BLUE_LT, "A": C_BLUE_XLT}
 
 # 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
-SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0, "k_attr": 0, "k_raise": 3.0}
+SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0.0, "k_attr": 0.0, "k_raise": 3.0}
 
 # 차트 클릭 확대/툴바 끄기 (정적 표시) — 축 fixedrange 와 함께 줌·팬 차단
 PLOTLY_CONFIG = {"displayModeBar": False, "staticPlot": False, "scrollZoom": False}
@@ -160,8 +160,8 @@ st.session_state.setdefault("snapshots", [])
 _pending = st.session_state.pop("_pending_restore", None)
 if _pending:
     st.session_state["k_years"] = int(_pending["years"])
-    st.session_state["k_promo"] = int(_pending["promo_pct"])
-    st.session_state["k_attr"] = int(_pending["attr_pct"])
+    st.session_state["k_promo"] = float(_pending["promo_pct"])
+    st.session_state["k_attr"] = float(_pending["attr_pct"])
     st.session_state["k_raise"] = float(_pending["raise_rate_pct"])
 
 inject_css()
@@ -178,15 +178,16 @@ with st.sidebar:
 
     st.divider()
     st.subheader("승진율")
-    promo_pct = st.number_input("승진율 조정 (%, baseline 대비)", min_value=-50, max_value=100,
-                                step=1, key="k_promo",
-                                help="baseline 승진율 대비 배율. +30 이면 승진율 ×1.3. "
-                                     "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
+    promo_pct = st.number_input("승진율 조정 (%, baseline 대비)", min_value=-50.0, max_value=100.0,
+                                step=0.1, format="%.1f", key="k_promo",
+                                help="baseline 승진율 대비 배율. +2.2 이면 승진율 ×1.022. "
+                                     "소수점 입력 가능. 재직률이 음수가 되지 않도록 "
+                                     "(1-퇴직률) 이하로 자동 제한.")
 
     st.subheader("퇴직률")
-    attr_pct = st.number_input("퇴직률 조정 (%, baseline 대비)", min_value=-50, max_value=100,
-                               step=1, key="k_attr",
-                               help="baseline 퇴직률 대비 배율. -20 이면 퇴직률 ×0.8.")
+    attr_pct = st.number_input("퇴직률 조정 (%, baseline 대비)", min_value=-50.0, max_value=100.0,
+                               step=0.1, format="%.1f", key="k_attr",
+                               help="baseline 퇴직률 대비 배율. -2.5 이면 퇴직률 ×0.975. 소수점 입력 가능.")
 
     st.subheader("인건비 인상률")
     raise_rate = st.number_input("연 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
@@ -213,7 +214,7 @@ SHOW_TABLE = view_mode == "표(숫자)"
 # 계산 — baseline(조정 없음) vs 시뮬(조정 반영)   [로직 불변]
 # =============================================================
 @st.cache_data(show_spinner=False)
-def compute(years: int, promo_pct: int, attr_pct: int, raise_rate: float):
+def compute(years: int, promo_pct: float, attr_pct: float, raise_rate: float):
     base_params = sc.build_default_params(years=years)
     baseline = sc.run(base_params)
     adj = sc.Adjustments(
@@ -404,8 +405,8 @@ st.markdown(
     unsafe_allow_html=True)
 
 if st.button("스냅샷 저장"):
-    controls = {"years": int(years), "promo_pct": int(promo_pct),
-                "attr_pct": int(attr_pct), "raise_rate_pct": float(raise_rate)}
+    controls = {"years": int(years), "promo_pct": float(promo_pct),
+                "attr_pct": float(attr_pct), "raise_rate_pct": float(raise_rate)}
     label = snap.make_label(**controls)
     st.session_state["snapshots"].append(snap.capture(label, controls, adj, sim))
     st.toast(f"스냅샷 저장: {label}")
@@ -495,8 +496,8 @@ else:
                                     label_visibility="collapsed")
         with c_info:
             c = s.controls
-            st.caption(f"연수 {c['years']} · 승진 {c['promo_pct']:+d}% · "
-                       f"퇴직 {c['attr_pct']:+d}% · 인상 {c['raise_rate_pct']:g}%")
+            st.caption(f"연수 {c['years']} · 승진 {c['promo_pct']:+g}% · "
+                       f"퇴직 {c['attr_pct']:+g}% · 인상 {c['raise_rate_pct']:g}%")
         with c_restore:
             if st.button("복원", key=f"restore_{s.snapshot_id}", use_container_width=True):
                 st.session_state["_pending_restore"] = dict(s.controls)
@@ -547,7 +548,7 @@ st.divider()
 st.markdown("### 인사이트 챗봇")
 
 insight_ctx = {
-    "years": int(years), "promo_pct": int(promo_pct), "attr_pct": int(attr_pct),
+    "years": int(years), "promo_pct": float(promo_pct), "attr_pct": float(attr_pct),
     "raise_rate": float(raise_rate),
     "tot_base": tot_base, "tot_sim": tot_sim,
     "cum_delta_eok": cum_delta / 1e8,

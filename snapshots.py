@@ -50,7 +50,7 @@ class Snapshot:
 # =============================================================
 # 라벨 자동 생성 (보완 3)
 # =============================================================
-def make_label(years: int, promo_pct: int, attr_pct: int,
+def make_label(years: int, promo_pct: float, attr_pct: float,
                raise_rate_pct: float) -> str:
     """baseline 과 다른 레버만 골라 라벨 생성. 전부 기본이면 'baseline'.
 
@@ -60,10 +60,10 @@ def make_label(years: int, promo_pct: int, attr_pct: int,
     - 0 또는 기본값인 레버는 라벨에서 생략.
     """
     parts: list[str] = []
-    if promo_pct != DEFAULT_PROMO_PCT:
-        parts.append(f"승진 {promo_pct:+d}%")
-    if attr_pct != DEFAULT_ATTR_PCT:
-        parts.append(f"퇴직 {attr_pct:+d}%")
+    if abs(promo_pct - DEFAULT_PROMO_PCT) > 1e-9:
+        parts.append(f"승진 {promo_pct:+g}%")
+    if abs(attr_pct - DEFAULT_ATTR_PCT) > 1e-9:
+        parts.append(f"퇴직 {attr_pct:+g}%")
     if abs(raise_rate_pct - DEFAULT_RAISE_PCT) > 1e-9:
         r = raise_rate_pct
         rtxt = str(int(round(r))) if abs(r - round(r)) < 1e-9 else f"{r:g}"
