@@ -120,7 +120,7 @@ def build_default_params(years: int = 5) -> SimParams:
         promotion_rate=promotion,
         hiring_plan=hiring,
         years=years,
-        raise_rate=0.03,
+        raise_rate=0.0,   # baseline = '인상 0%' 기준선. 슬라이더로 올린 만큼 누적 Δ가 +로 잡힌다.
     )
 
 

@@ -28,10 +28,10 @@ import pandas as pd
 import sim_core as sc
 
 # 슬라이더 기본값 = baseline 판정 기준 (sim_app 슬라이더 기본과 일치해야 함).
-#   raise 기본 3.0% 는 build_default_params(raise_rate=0.03) 와 일치.
+#   raise 기본 0.0% 는 build_default_params(raise_rate=0.0) 와 일치.
 DEFAULT_PROMO_PCT = 0
 DEFAULT_ATTR_PCT = 0
-DEFAULT_RAISE_PCT = 3.0
+DEFAULT_RAISE_PCT = 0.0
 
 
 @dataclass

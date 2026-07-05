@@ -143,7 +143,7 @@ FONT_FAMILY = "Pretendard, system-ui, sans-serif"
 FAMILY_COLOR = {"P": C_NAVY, "R": C_BLUE, "E": C_BLUE_LT, "A": C_BLUE_XLT}
 
 # 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
-SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0.0, "k_attr": 0.0, "k_raise": 3.0}
+SLIDER_DEFAULTS = {"k_years": 5, "k_promo": 0.0, "k_attr": 0.0, "k_raise": 0.0}
 
 # 차트 클릭 확대/툴바 끄기 (정적 표시) — 축 fixedrange 와 함께 줌·팬 차단
 PLOTLY_CONFIG = {"displayModeBar": False, "staticPlot": False, "scrollZoom": False}
@@ -193,7 +193,8 @@ with st.sidebar:
     raise_rate = st.number_input("연 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
                                  format="%.2f", key="k_raise",
                                  help="직접 기입(예: 3.15). 매년 단가 = 단가×(1+인상률)^연차. "
-                                      "인상률은 민감하니 소수점까지 입력하세요(최대 10%).")
+                                      "baseline은 인상 0% 기준이라, 여기서 올린 만큼 누적 인건비 Δ가 "
+                                      "+로 잡힙니다. 소수점까지 입력 가능(최대 10%).")
 
     st.divider()
     view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
