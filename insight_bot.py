@@ -58,7 +58,9 @@ def build_system_prompt(ctx: dict) -> str:
         f"- 상위단계 비중: baseline {ctx.get('top_base'):.1f}% → 시뮬 {ctx.get('top_sim'):.1f}% "
         f"(Δ {ctx.get('top_sim', 0) - ctx.get('top_base', 0):+.1f}%p)\n"
         f"- 최종연도 직군별 인원: {fam}\n"
-        f"- 초기 인력구조는 '모래시계형'(하위·상위 두껍고 허리 얇음). 목표는 피라미드형으로의 전환.\n"
+        f"- 초기 인력구조는 '모래시계형': 실무 기반(하위)은 두껍지만 중간관리 계층(허리)이 "
+        f"공동화돼 있고 상위 고참은 남아 있음. 핵심 문제는 '중간관리자 공백'이며, "
+        f"승진율 등 레버로 허리를 채워 '피라미드형'으로 전환하는 것이 목표.\n"
         + _format_snapshots(ctx.get("snapshots", []))
     )
 

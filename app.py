@@ -446,8 +446,10 @@ else:
 
 st.markdown("#### 직급 구조 실루엣 — 모래시계 ↔ 피라미드")
 st.caption(f"직급을 상대 위치로 5개 티어(하위→상위)에 묶어 중앙정렬한 실루엣. "
-           f"좌=baseline 현재({BASE_YEAR})는 허리가 얇은 **모래시계형**, "
-           f"우=시뮬 최종연도({BASE_YEAR + years})는 레버 조정 후 형태 변화를 보여줍니다.")
+           f"좌=baseline 현재({BASE_YEAR}): 실무 기반은 두껍지만 **허리(중위·중상=중간관리 계층)가 "
+           f"비어 있는 모래시계형**이 현재의 문제. "
+           f"우=시뮬 최종연도({BASE_YEAR + years}): 승진율 등 레버를 조정해 허리를 채우면 "
+           f"**피라미드형**으로 이동 — 그 목표를 맞추는 것이 시뮬레이션의 목적.")
 sil_l, sil_r = st.columns(2)
 with sil_l:
     st.plotly_chart(shape_silhouette(baseline.headcount_by_year[0],
