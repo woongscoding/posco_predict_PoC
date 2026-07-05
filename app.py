@@ -15,6 +15,7 @@ app.py — POSCO HR 인력운영 시뮬레이터 (v3, 배포 엔트리)
 from __future__ import annotations
 
 import os
+from datetime import date
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -32,6 +33,15 @@ import snapshots as snap
 import insight_bot
 
 st.set_page_config(page_title="POSCO HR 시뮬레이터", layout="wide", page_icon="🔷")
+
+# 추계 연도 라벨: 연차 0 = 올해(기준 스냅샷), 추계·조정 효과는 내년(BASE_YEAR+1)부터 반영.
+# (코어는 t=0에 전이·인상 미적용이므로 조정 효과는 이미 내년부터 시작한다. 여기선 표시만 실제 연도로.)
+BASE_YEAR = date.today().year
+
+
+def year_label(t: int) -> str:
+    """연차 t → 실제 연도 문자열. 기준연(t=0)은 '올해' 표기."""
+    return f"{BASE_YEAR}(기준)" if t == 0 else str(BASE_YEAR + t)
 
 # Streamlit Cloud 배포용: Secrets 에 넣은 키를 환경변수로 브리지(insight_bot 은 os.environ 을 읽음).
 try:
@@ -242,7 +252,7 @@ def _style(fig: go.Figure, height: int, title: str | None = None) -> go.Figure:
 
 def area_by_family(result: sc.SimResult, title: str, height: int = 320,
                    showlegend: bool = True) -> go.Figure:
-    yrs = list(range(len(result.headcount_by_year)))
+    yrs = [year_label(t) for t in range(len(result.headcount_by_year))]
     fig = go.Figure()
     for f in sc.FAMILY_LEVELS:
         vals = [sc.headcount_by_family(hc).get(f, 0.0)
@@ -253,7 +263,7 @@ def area_by_family(result: sc.SimResult, title: str, height: int = 320,
             hovertemplate=f"{f} %{{y:.0f}}명<extra></extra>",
         ))
     _style(fig, height, title)
-    fig.update_layout(xaxis_title="연차", yaxis_title="인원(명)", showlegend=showlegend)
+    fig.update_layout(xaxis_title="연도", yaxis_title="인원(명)", showlegend=showlegend)
     return fig
 
 
@@ -264,9 +274,9 @@ def headcount_table(result: sc.SimResult) -> pd.DataFrame:
         byf = sc.headcount_by_family(hc)
         row = {f: round(byf.get(f, 0.0)) for f in sc.FAMILY_LEVELS}
         row["총원"] = round(sc.total_headcount(hc))
-        data[t] = row
+        data[year_label(t)] = row
     df = pd.DataFrame.from_dict(data, orient="index")
-    df.index.name = "연차"
+    df.index.name = "연도"
     return df.reset_index()
 
 
@@ -274,7 +284,7 @@ def cost_table(baseline: sc.SimResult, sim: sc.SimResult) -> pd.DataFrame:
     """연도별 총 인건비 표(억원): baseline / 시뮬 / Δ."""
     rows = []
     for t, (b, s) in enumerate(zip(baseline.labor_cost_by_year, sim.labor_cost_by_year)):
-        rows.append({"연차": t,
+        rows.append({"연도": year_label(t),
                      "baseline(억)": round(b / 1e8, 1),
                      "시뮬(억)": round(s / 1e8, 1),
                      "Δ(억)": round((s - b) / 1e8, 1)})
@@ -283,7 +293,7 @@ def cost_table(baseline: sc.SimResult, sim: sc.SimResult) -> pd.DataFrame:
 
 def cost_chart(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
     """연도별 총 인건비 — baseline vs 시뮬 그룹 막대."""
-    yrs = [str(t) for t in range(len(baseline.labor_cost_by_year))]
+    yrs = [year_label(t) for t in range(len(baseline.labor_cost_by_year))]
     b = [c / 1e8 for c in baseline.labor_cost_by_year]
     s = [c / 1e8 for c in sim.labor_cost_by_year]
     fig = go.Figure()
@@ -292,12 +302,12 @@ def cost_chart(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
     fig.add_bar(x=yrs, y=s, name="시뮬", marker_color=C_BLUE,
                 hovertemplate="시뮬 %{y:.0f}억<extra></extra>")
     _style(fig, 320, "연도별 총 인건비 (억원)")
-    fig.update_layout(barmode="group", xaxis_title="연차", yaxis_title="인건비(억원)")
+    fig.update_layout(barmode="group", xaxis_title="연도", yaxis_title="인건비(억원)")
     return fig
 
 
 def mini_cost(result: sc.SimResult) -> go.Figure:
-    yrs = list(range(len(result.labor_cost_by_year)))
+    yrs = [year_label(t) for t in range(len(result.labor_cost_by_year))]
     s = [c / 1e8 for c in result.labor_cost_by_year]
     fig = go.Figure(go.Scatter(x=yrs, y=s, mode="lines",
                                line=dict(color=C_BLUE, width=2)))
@@ -358,6 +368,8 @@ st.divider()
 # 좌우 비교 — baseline ↔ 시뮬
 # =============================================================
 st.markdown("### baseline ↔ 시뮬 좌우 비교")
+st.caption(f"기준연도 = 올해({BASE_YEAR}) 현재 인원 스냅샷. 승진율·퇴직률·인상률 조정 효과는 "
+           f"내년({BASE_YEAR + 1})부터 {BASE_YEAR + years}년까지 추계에 반영됩니다.")
 left, right = st.columns(2)
 with left:
     st.markdown("#### BASELINE (조정 없음)")
