@@ -320,6 +320,8 @@ def area_by_family(result: sc.SimResult, title: str, height: int = 320,
             hovertemplate=f"{f} %{{y:.0f}}명<extra></extra>",
         ))
     _style(fig, height, title)
+    # 연도 라벨('2026(기준)','2027'…)이 숫자축으로 오인돼 기준연 포인트가 NaN 되는 것 방지.
+    fig.update_xaxes(type="category")
     fig.update_layout(xaxis_title="연도", yaxis_title="인원(명)", showlegend=showlegend)
     return fig
 
@@ -359,6 +361,7 @@ def cost_chart(baseline: sc.SimResult, sim: sc.SimResult) -> go.Figure:
     fig.add_bar(x=yrs, y=s, name="시뮬", marker_color=C_BLUE,
                 hovertemplate="시뮬 %{y:.0f}억<extra></extra>")
     _style(fig, 320, "연도별 총 인건비 (억원)")
+    fig.update_xaxes(type="category")
     fig.update_layout(barmode="group", xaxis_title="연도", yaxis_title="인건비(억원)")
     return fig
 
@@ -400,6 +403,7 @@ def mini_cost(result: sc.SimResult) -> go.Figure:
     fig = go.Figure(go.Scatter(x=yrs, y=s, mode="lines",
                                line=dict(color=C_BLUE, width=2)))
     _style(fig, 140)
+    fig.update_xaxes(type="category")
     fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title="억원",
                       yaxis=dict(title_font=dict(size=10)))
     return fig
