@@ -120,6 +120,14 @@ section[data-testid="stSidebar"] .stSlider [role="slider"]{ background:var(--blu
 .posco-mark{ display:inline-block; border:1.5px solid rgba(255,255,255,.4); border-radius:6px;
   padding:6px 12px; color:#fff; font-weight:800; letter-spacing:.04em; }
 
+/* 조정 레버 틀고정(엑셀 틀고정 스타일): 데스크톱에선 사이드바를 뷰포트에 고정하고
+   내부만 스크롤 → 본문을 아무리 내려도 레버가 항상 보인다.
+   모바일(<768px)은 Streamlit 기본 오버레이 사이드바 유지(좌상단 토글로 접근). */
+@media (min-width: 768px){
+  section[data-testid="stSidebar"]{ position:sticky; top:0; height:100vh; align-self:flex-start; }
+  section[data-testid="stSidebar"] > div:first-child{ height:100vh; overflow-y:auto; }
+}
+
 /* 인라인 헤더 */
 .posco-head{ display:flex; align-items:center; gap:12px; margin:4px 0 6px; }
 .posco-head h1{ font-size:24px; font-weight:800; margin:0; letter-spacing:-.01em; }
@@ -137,6 +145,14 @@ section[data-testid="stSidebar"] .stSlider [role="slider"]{ background:var(--blu
 .kpi .delta{ font-size:11.5px; font-weight:700; margin-top:6px; }
 .kpi .up{ color:#1B8A5A; } .kpi .down{ color:#C33; } .kpi.fill .down{ color:#F3B4B4; }
 .kpi.fill .up{ color:#9BE3C1; }
+
+/* st.metric — KPI 타일과 톤을 맞춘 카드 (누적 인건비 Δ 강조 등) */
+[data-testid="stMetric"]{ border:1px solid var(--line); border-radius:12px;
+  padding:14px 16px; background:var(--panel); }
+[data-testid="stMetric"] [data-testid="stMetricLabel"]{ color:var(--muted);
+  font-size:12px; font-weight:600; }
+[data-testid="stMetric"] [data-testid="stMetricValue"]{ color:var(--ink);
+  font-weight:800; letter-spacing:-.02em; }
 
 /* 카드/표/버튼 */
 .card{ border:1px solid var(--line); border-radius:12px; padding:18px 20px; }
@@ -181,6 +197,11 @@ FONT_FAMILY = "Pretendard, system-ui, sans-serif"
 
 # 직군 색상 — 명시 지정
 FAMILY_COLOR = {"P": C_NAVY, "R": C_BLUE, "E": C_BLUE_LT, "A": C_BLUE_XLT}
+
+# 직급 티어 색상 — 하위(연청)→상위(네이비) 단조 그라데이션.
+#   좌(baseline)·우(시뮬) 비교 차트에서 동일 색을 써 티어별 대응이 한눈에 보이게.
+TIER_COLOR = {"하위": "#A9CBEF", "중하": "#6FA9E4", "중위": C_BLUE_LT,
+              "중상": C_BLUE, "상위": C_NAVY}
 
 # 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
 #   인상률은 직급 티어별(하위→상위) 5개 입력. 기본 0% = baseline과 동일(Δ 0).
@@ -326,6 +347,28 @@ def area_by_family(result: sc.SimResult, title: str, height: int = 320,
     return fig
 
 
+def area_by_tier(result: sc.SimResult, title: str, height: int = 320,
+                 showlegend: bool = True, y_max: float | None = None) -> go.Figure:
+    """연도별 직급 티어(하위→상위) 누적 인원 — 직군별 단계 수 차이(3~7단계)를
+    상대 위치 5티어 매핑(tier_distribution)으로 정규화해 직급 기준으로 비교.
+    y_max 를 주면 좌우 비교 시 동일 축으로 고정."""
+    yrs = [year_label(t) for t in range(len(result.headcount_by_year))]
+    fig = go.Figure()
+    for tier in TIER_ORDER:
+        vals = [tier_distribution(hc)[tier] for hc in result.headcount_by_year]
+        fig.add_trace(go.Scatter(
+            x=yrs, y=vals, mode="lines", stackgroup="one", name=tier,
+            line=dict(width=0.5, color=TIER_COLOR[tier]),
+            hovertemplate=f"{tier} %{{y:.0f}}명<extra></extra>",
+        ))
+    _style(fig, height, title)
+    fig.update_xaxes(type="category")
+    if y_max is not None:
+        fig.update_yaxes(range=[0, y_max])
+    fig.update_layout(xaxis_title="연도", yaxis_title="인원(명)", showlegend=showlegend)
+    return fig
+
+
 def headcount_table(result: sc.SimResult) -> pd.DataFrame:
     """연도별 직군 인원 + 총원 표(숫자)."""
     data = {}
@@ -379,7 +422,8 @@ def tier_distribution(hc_year: dict[str, dict[str, float]]) -> dict[str, float]:
 
 
 def shape_silhouette(hc_year: dict[str, dict[str, float]], title: str,
-                     color: str) -> go.Figure:
+                     color: str, x_max: float | None = None) -> go.Figure:
+    """x_max: 좌(baseline)·우(시뮬)를 같은 가로 스케일로 그려 폭을 직접 비교할 때 지정."""
     tiers = tier_distribution(hc_year)
     vals = [tiers[t] for t in TIER_ORDER]
     fig = go.Figure(go.Bar(
@@ -389,7 +433,8 @@ def shape_silhouette(hc_year: dict[str, dict[str, float]], title: str,
         cliponaxis=False, hovertemplate="%{y} %{x:,.0f}명<extra></extra>",
     ))
     _style(fig, 300, title)
-    _max = max(vals) if vals else 1
+    _max = x_max if x_max is not None else (max(vals) if vals else 1)
+    _max = _max or 1
     fig.update_layout(showlegend=False,
                       xaxis=dict(visible=False, range=[-_max * 0.72, _max * 0.72]))
     fig.update_yaxes(categoryorder="array", categoryarray=TIER_ORDER,
@@ -462,12 +507,23 @@ st.divider()
 st.markdown("### baseline ↔ 시뮬 좌우 비교")
 st.caption(f"기준연도 = 올해({BASE_YEAR}) 현재 인원 스냅샷. 승진율·퇴직률·인상률 조정 효과는 "
            f"내년({BASE_YEAR + 1})부터 {BASE_YEAR + years}년까지 추계에 반영됩니다.")
+comp_dim = st.radio(
+    "구분 기준", ["직급 티어", "직군"], horizontal=True, key="k_comp_dim",
+    help="직급 티어 = 직군별 단계(3~7개)를 상대 위치로 하위→상위 5티어에 묶어 집계 / "
+         "직군 = P·R·E·A 4개 직군별 집계")
+# 좌우 동일 축(y) 고정 — 양쪽 최대 총원 기준으로 같은 스케일에서 비교.
+_cmp_y_max = max(
+    max(sc.total_headcount(hc) for hc in baseline.headcount_by_year),
+    max(sc.total_headcount(hc) for hc in sim.headcount_by_year)) * 1.08
 left, right = st.columns(2)
 with left:
     st.markdown("#### BASELINE (조정 없음)")
     if SHOW_TABLE:
         st.caption("연도별 직군 인원 · 총원")
         st.dataframe(headcount_table(baseline), use_container_width=True, hide_index=True)
+    elif comp_dim == "직급 티어":
+        st.plotly_chart(area_by_tier(baseline, "인력 구조 (직급 티어 누적)", y_max=_cmp_y_max),
+                        use_container_width=True, key="area_base_tier", config=PLOTLY_CONFIG)
     else:
         st.plotly_chart(area_by_family(baseline, "인력 구조 (직군 누적)"),
                         use_container_width=True, key="area_base", config=PLOTLY_CONFIG)
@@ -476,6 +532,9 @@ with right:
     if SHOW_TABLE:
         st.caption("연도별 직군 인원 · 총원")
         st.dataframe(headcount_table(sim), use_container_width=True, hide_index=True)
+    elif comp_dim == "직급 티어":
+        st.plotly_chart(area_by_tier(sim, "인력 구조 (직급 티어 누적)", y_max=_cmp_y_max),
+                        use_container_width=True, key="area_sim_tier", config=PLOTLY_CONFIG)
     else:
         st.plotly_chart(area_by_family(sim, "인력 구조 (직군 누적)"),
                         use_container_width=True, key="area_sim", config=PLOTLY_CONFIG)
@@ -487,18 +546,45 @@ else:
     st.plotly_chart(cost_chart(baseline, sim), use_container_width=True,
                     key="cost_chart", config=PLOTLY_CONFIG)
 
+# --- 추계 기간 전체 누적 인건비: baseline vs 시뮬 합산 + Δ(금액·비율) 강조 ---
+#     기준연(t=0)~최종연도 합. 인건비 증가는 부담 방향이므로 delta_color="inverse"(+가 빨강).
+cum_base = sum(baseline.labor_cost_by_year)
+cum_sim = sum(sim.labor_cost_by_year)
+cum_diff = cum_sim - cum_base
+cum_pct = (cum_diff / cum_base * 100.0) if cum_base else 0.0
+mc1, mc2, mc3 = st.columns(3)
+mc1.metric(f"baseline 누적 인건비 ({years}년)", f"{cum_base / 1e8:,.0f}억")
+mc2.metric(f"시뮬 누적 인건비 ({years}년)", f"{cum_sim / 1e8:,.0f}억",
+           delta=f"{cum_diff / 1e8:+,.0f}억", delta_color="inverse")
+mc3.metric("누적 Δ (vs baseline)", f"{cum_diff / 1e8:+,.0f}억",
+           delta=f"{cum_pct:+.2f}%", delta_color="inverse")
+st.caption(f"baseline 누적 {cum_base / 1e8:,.0f}억 → 시뮬 {cum_sim / 1e8:,.0f}억 "
+           f"(Δ {cum_diff / 1e8:+,.0f}억, {cum_pct:+.2f}%)")
+
 st.markdown("#### 직급 구조 실루엣")
-st.caption(f"직급을 상대 위치로 5개 티어(하위→상위)에 묶어 중앙정렬한 실루엣. "
-           f"좌=baseline 현재({BASE_YEAR}): 허리(중위·중상=중간관리 계층)가 얇은 모래시계형. "
-           f"우=시뮬 최종연도({BASE_YEAR + years}): 승진율 등 레버 조정을 반영한 결과.")
+st.caption("직급을 상대 위치로 5개 티어(하위→상위)에 묶어 중앙정렬한 실루엣. "
+           "아래 연도 슬라이더를 움직이면 좌(baseline)·우(시뮬)가 같은 연도로 동시에 갱신됩니다. "
+           "허리(중위·중상=중간관리 계층)가 얇으면 모래시계형.")
+# 연도 슬라이더 — 기본값은 최종연도. 추계 연수(years)가 바뀌면 옵션 범위가 달라지므로
+# key 에 years 를 포함해 낡은 선택값(범위 밖)이 남지 않게 리셋한다.
+_sil_years = list(range(len(sim.headcount_by_year)))
+sel_t = st.select_slider("실루엣 연도", options=_sil_years, value=_sil_years[-1],
+                         format_func=year_label, key=f"k_sil_year_{years}",
+                         help="좌우로 움직여 중간 연도의 직급 구조 변화를 확인")
+# 좌우 같은 가로 스케일 — 선택 연도의 양쪽 티어 최대값 기준.
+_sil_max = max(
+    max(tier_distribution(baseline.headcount_by_year[sel_t]).values()),
+    max(tier_distribution(sim.headcount_by_year[sel_t]).values()))
 sil_l, sil_r = st.columns(2)
 with sil_l:
-    st.plotly_chart(shape_silhouette(baseline.headcount_by_year[0],
-                                     f"BASELINE · {BASE_YEAR}(현재)", C_BASE),
+    st.plotly_chart(shape_silhouette(baseline.headcount_by_year[sel_t],
+                                     f"BASELINE · {year_label(sel_t)}", C_BASE,
+                                     x_max=_sil_max),
                     use_container_width=True, key="sil_base", config=PLOTLY_CONFIG)
 with sil_r:
-    st.plotly_chart(shape_silhouette(sim.headcount_by_year[-1],
-                                     f"시뮬 · {BASE_YEAR + years}(최종연도)", C_BLUE),
+    st.plotly_chart(shape_silhouette(sim.headcount_by_year[sel_t],
+                                     f"시뮬 · {year_label(sel_t)}", C_BLUE,
+                                     x_max=_sil_max),
                     use_container_width=True, key="sil_sim", config=PLOTLY_CONFIG)
 
 with st.expander("최종연도 직군·단계별 인원 상세 (baseline / 시뮬 / Δ)"):
