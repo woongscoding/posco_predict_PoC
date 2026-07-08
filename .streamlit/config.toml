@@ -1,8 +1,9 @@
-# POSCO 인력운영 시뮬레이터 — 푸른색 계열 브랜드 테마
+# POSCO 브랜드 톤(딥 블루) — posco_2과제 디자인 시스템과 동일 테마.
+# 보는 사람의 다크모드 설정과 무관하게 항상 흰 배경 + 네이비 포인트로 렌더링.
 [theme]
 base = "light"
-primaryColor = "#0072CE"            # POSCO 계열 블루 (버튼·슬라이더·강조)
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#EAF2FB"  # 사이드바·카드 배경(연한 블루)
-textColor = "#0A2540"               # 네이비 텍스트
+primaryColor = "#003C71"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#EEF3F8"
+textColor = "#1A2B3C"
 font = "sans serif"

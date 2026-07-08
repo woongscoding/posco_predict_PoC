@@ -14,8 +14,10 @@ app.py — POSCO HR 인력운영 시뮬레이터 (v3, 배포 엔트리)
 """
 from __future__ import annotations
 
+import base64
 import os
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -97,23 +99,28 @@ except Exception:
 POSCO_CSS = """
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+/* 팔레트 — posco_2과제(정기인사 시뮬레이션 Agent) 디자인 시스템과 통일
+   네이비 #003C71 · 딥네이비 #002B5B · 블루 #0072CE · 스카이 포인트 #00A0E9 */
 :root{
-  --navy:#002C5F; --blue:#0057B8; --blue-lt:#3E8FE0;
-  --ink:#10233F; --muted:#6B7688; --line:#E1E7F0; --panel:#F4F7FB;
+  --navy:#003C71; --navy-dp:#002B5B; --blue:#0072CE; --sky:#00A0E9; --blue-lt:#4878A8;
+  --ink:#1A2B3C; --muted:#6B7688; --line:#D6E4F0; --panel:#EEF3F8;
 }
 html, body, [class*="css"]{ font-family:'POSCO','Pretendard',system-ui,sans-serif; color:var(--ink); }
 .stApp{ background:#FFFFFF; }
 
-/* POSCO 마크 — 네이비 칩 (헤더·레버 바 공용) */
-.posco-mark{ display:inline-block; background:linear-gradient(135deg,#002C5F,#0A4C97);
+/* POSCO 마크 — 네이비 칩 (로고 로드 실패 시 폴백) */
+.posco-mark{ display:inline-block; background:linear-gradient(135deg,#002B5B,#0072CE);
   border-radius:6px; padding:6px 12px; color:#fff; font-weight:800; letter-spacing:.04em; }
 
 /* 조정 레버 상단 고정 바 — 엑셀 첫 행 '틀고정' 스타일.
-   st.container(key="lever_bar") 가 만드는 .st-key-lever_bar 를 sticky 로 띄워
-   본문을 아무리 내려도 레버가 화면 위에 붙어 따라온다. 모바일 포함 전 해상도 동작. */
-.st-key-lever_bar{ position:sticky; top:3.75rem; z-index:99; background:#FFFFFF;
-  border:1px solid var(--line); border-radius:12px; padding:12px 16px 2px;
-  box-shadow:0 10px 22px rgba(16,35,63,.10); margin-bottom:8px; }
+   ★ sticky 는 .st-key-lever_bar(내부 블록)가 아니라 그 부모 stLayoutWrapper 에 건다.
+   내부 블록은 부모 래퍼와 높이가 같아 sticky 이동 공간이 0 → 스크롤을 따라오지 못했음.
+   래퍼에 걸면 본문 컬럼 전체가 이동 범위가 되어 끝까지 따라온다. */
+div[data-testid="stLayoutWrapper"]:has(> .st-key-lever_bar){
+  position:sticky; top:3.75rem; z-index:99;
+  background:#FFFFFF; border:1px solid var(--line); border-radius:12px;
+  box-shadow:0 10px 22px rgba(0,44,91,.12); margin-bottom:8px; }
+.st-key-lever_bar{ padding:12px 16px 2px; }
 .st-key-lever_bar label p{ font-weight:700 !important; color:var(--navy) !important; }
 .st-key-lever_bar .stNumberInput input{ font-weight:700; font-variant-numeric:tabular-nums; }
 
@@ -127,7 +134,7 @@ html, body, [class*="css"]{ font-family:'POSCO','Pretendard',system-ui,sans-seri
 /* KPI 타일 */
 .kpi-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:18px 0; }
 .kpi{ border-radius:12px; padding:20px; border:1px solid var(--line); background:var(--panel); }
-.kpi.fill{ background:linear-gradient(135deg,#002C5F,#0A4C97); border:0; color:#fff; }
+.kpi.fill{ background:linear-gradient(135deg,#002B5B 0%,#0072CE 100%); border:0; color:#fff; }
 .kpi .label{ font-size:12px; font-weight:600; color:var(--muted); }
 .kpi.fill .label{ color:#B7CDEA; }
 .kpi .value{ font-size:32px; font-weight:800; letter-spacing:-.02em; margin-top:8px; }
@@ -158,11 +165,25 @@ def inject_css():
     st.markdown(POSCO_CSS, unsafe_allow_html=True)
 
 
+@st.cache_data
+def _posco_logo_b64() -> str:
+    """공식 로고 SVG(assets/posco_logo.svg) → base64. 없으면 예외 → 텍스트 마크 폴백."""
+    logo_path = Path(__file__).parent / "assets" / "posco_logo.svg"
+    return base64.b64encode(logo_path.read_bytes()).decode()
+
+
 def render_header():
+    # posco_2과제 헤더 스타일: 공식 로고 + 스카이(#00A0E9) 세로 포인트 바 + 네이비 타이틀
+    try:
+        mark = (f'<img src="data:image/svg+xml;base64,{_posco_logo_b64()}" '
+                f'style="height:34px;"/>')
+    except Exception:
+        mark = '<span class="posco-mark">POSCO</span>'
     st.markdown(
-        '<div class="posco-head">'
-        '<span class="posco-mark">POSCO</span>'
-        '<h1>HR 인력운영 시뮬레이터</h1>'
+        '<div class="posco-head" style="gap:18px;">'
+        f'{mark}'
+        '<div style="border-left:5px solid var(--sky); padding-left:14px;">'
+        '<h1 style="color:var(--navy);">HR 인력운영 시뮬레이터</h1></div>'
         '<span class="posco-badge">v3 · MOCKUP</span>'
         '</div>',
         unsafe_allow_html=True)
@@ -173,24 +194,26 @@ def render_header():
 
 
 # =============================================================
-# 브랜드 팔레트 (POSCO 블루)
+# 브랜드 팔레트 (POSCO 블루) — posco_2과제 디자인 시스템과 통일
 # =============================================================
-C_NAVY = "#002C5F"
-C_BLUE = "#0057B8"
-C_BLUE_LT = "#3E8FE0"
-C_BLUE_XLT = "#8FBEEE"
-C_BASE = "#B7C2D2"       # baseline 계열(연한 회청)
-C_GRID = "#F2F4F8"
-C_INK = "#10233F"
+C_NAVY = "#003C71"
+C_NAVY_DP = "#002B5B"
+C_BLUE = "#0072CE"
+C_SKY = "#00A0E9"
+C_BLUE_LT = "#4878A8"
+C_BLUE_XLT = "#7C9CBF"
+C_BASE = "#9FB3C8"       # baseline 계열(회청 — 레퍼런스 뉴트럴)
+C_GRID = "#EEF3F8"
+C_INK = "#1A2B3C"
 FONT_FAMILY = "Pretendard, system-ui, sans-serif"
 
-# 직군 색상 — 명시 지정
-FAMILY_COLOR = {"P": C_NAVY, "R": C_BLUE, "E": C_BLUE_LT, "A": C_BLUE_XLT}
+# 직군 색상 — 레퍼런스 조직도의 4단 블루 스케일
+FAMILY_COLOR = {"P": C_NAVY_DP, "R": "#1B4F8A", "E": C_BLUE_LT, "A": C_BLUE_XLT}
 
-# 직급 티어 색상 — 하위(연청)→상위(네이비) 단조 그라데이션.
+# 직급 티어 색상 — 하위(연청)→상위(딥네이비) 단조 그라데이션.
 #   좌(baseline)·우(시뮬) 비교 차트에서 동일 색을 써 티어별 대응이 한눈에 보이게.
-TIER_COLOR = {"하위": "#A9CBEF", "중하": "#6FA9E4", "중위": C_BLUE_LT,
-              "중상": C_BLUE, "상위": C_NAVY}
+TIER_COLOR = {"하위": "#BFDCF5", "중하": C_BLUE_XLT, "중위": C_BLUE_LT,
+              "중상": C_BLUE, "상위": C_NAVY_DP}
 
 # 슬라이더 key ↔ 기본값. 복원은 이 key 에 값을 써넣고 rerun.
 #   인상률은 직급 티어별(하위→상위) 5개 입력. 기본 0% = baseline과 동일(Δ 0).
@@ -698,25 +721,32 @@ with col_clear:
         st.rerun()
 
 st.session_state.setdefault("chat", [])
-for m in st.session_state["chat"]:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
 
-prompt = st.chat_input("이 시뮬 결과에 대해 물어보세요 (예: 인건비를 줄이려면?)")
+# 메시지는 고정 높이 박스 안에서만 스크롤. chat_input 을 메인 루트에 두면
+# Streamlit 이 앱 전체를 chat 앱으로 간주해 '로드 시 맨 아래로 자동 스크롤'되므로
+# (KPI·차트가 아니라 챗봇부터 보이는 문제), 컬럼 안에 넣어 인라인으로 렌더한다.
+chat_box = st.container(height=380, border=True)
+with chat_box:
+    for m in st.session_state["chat"]:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+
+prompt = st.columns(1)[0].chat_input("이 시뮬 결과에 대해 물어보세요 (예: 인건비를 줄이려면?)")
 if prompt:
     st.session_state["chat"].append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    with st.chat_message("assistant"):
-        if insight_bot.has_api_key():
-            try:
-                reply = st.write_stream(
-                    insight_bot.stream_reply(st.session_state["chat"], insight_ctx))
-            except Exception as e:  # 키 오류·네트워크 등 → rule 폴백
+    with chat_box:
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant"):
+            if insight_bot.has_api_key():
+                try:
+                    reply = st.write_stream(
+                        insight_bot.stream_reply(st.session_state["chat"], insight_ctx))
+                except Exception as e:  # 키 오류·네트워크 등 → rule 폴백
+                    reply = insight_bot.rule_reply(st.session_state["chat"], insight_ctx)
+                    st.markdown(reply)
+                    st.caption(f"(Claude 호출 실패로 rule 폴백: {type(e).__name__})")
+            else:
                 reply = insight_bot.rule_reply(st.session_state["chat"], insight_ctx)
                 st.markdown(reply)
-                st.caption(f"(Claude 호출 실패로 rule 폴백: {type(e).__name__})")
-        else:
-            reply = insight_bot.rule_reply(st.session_state["chat"], insight_ctx)
-            st.markdown(reply)
     st.session_state["chat"].append({"role": "assistant", "content": reply})
