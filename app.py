@@ -104,29 +104,18 @@ POSCO_CSS = """
 html, body, [class*="css"]{ font-family:'POSCO','Pretendard',system-ui,sans-serif; color:var(--ink); }
 .stApp{ background:#FFFFFF; }
 
-/* 사이드바 — 네이비 */
-section[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0A2A52,#0E2038); border-right:0; }
-section[data-testid="stSidebar"] *{ color:#C7D5E8; }
-section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3{ color:#fff !important; font-weight:700; }
-section[data-testid="stSidebar"] .stNumberInput input, section[data-testid="stSidebar"] .stTextInput input{
-  background:#FFFFFF !important; color:#0A2A52 !important; border:1px solid rgba(255,255,255,.35);
-  border-radius:9px; font-weight:700; font-variant-numeric:tabular-nums;
-  -webkit-text-fill-color:#0A2A52 !important; }
-/* number_input +/- 스텝 버튼: 흰 배경 위 진한 아이콘 */
-section[data-testid="stSidebar"] .stNumberInput button{ background:#FFFFFF !important; color:#0A2A52 !important; }
-section[data-testid="stSidebar"] .stNumberInput button svg{ fill:#0A2A52 !important; }
-section[data-testid="stSidebar"] .stSlider [role="slider"]{ background:var(--blue-lt); }
-.posco-mark{ display:inline-block; border:1.5px solid rgba(255,255,255,.4); border-radius:6px;
-  padding:6px 12px; color:#fff; font-weight:800; letter-spacing:.04em; }
+/* POSCO 마크 — 네이비 칩 (헤더·레버 바 공용) */
+.posco-mark{ display:inline-block; background:linear-gradient(135deg,#002C5F,#0A4C97);
+  border-radius:6px; padding:6px 12px; color:#fff; font-weight:800; letter-spacing:.04em; }
 
-/* 조정 레버 틀고정(엑셀 틀고정 스타일): 데스크톱에선 사이드바를 뷰포트에 고정하고
-   내부만 스크롤 → 본문을 아무리 내려도 레버가 항상 보인다.
-   모바일(<768px)은 Streamlit 기본 오버레이 사이드바 유지(좌상단 토글로 접근). */
-@media (min-width: 768px){
-  section[data-testid="stSidebar"]{ position:sticky; top:0; height:100vh; align-self:flex-start; }
-  section[data-testid="stSidebar"] > div:first-child{ height:100vh; overflow-y:auto; }
-}
+/* 조정 레버 상단 고정 바 — 엑셀 첫 행 '틀고정' 스타일.
+   st.container(key="lever_bar") 가 만드는 .st-key-lever_bar 를 sticky 로 띄워
+   본문을 아무리 내려도 레버가 화면 위에 붙어 따라온다. 모바일 포함 전 해상도 동작. */
+.st-key-lever_bar{ position:sticky; top:3.75rem; z-index:99; background:#FFFFFF;
+  border:1px solid var(--line); border-radius:12px; padding:12px 16px 2px;
+  box-shadow:0 10px 22px rgba(16,35,63,.10); margin-bottom:8px; }
+.st-key-lever_bar label p{ font-weight:700 !important; color:var(--navy) !important; }
+.st-key-lever_bar .stNumberInput input{ font-weight:700; font-variant-numeric:tabular-nums; }
 
 /* 인라인 헤더 */
 .posco-head{ display:flex; align-items:center; gap:12px; margin:4px 0 6px; }
@@ -235,51 +224,49 @@ render_header()
 
 
 # =============================================================
-# 사이드바 — 조정 레버 (위젯 key/값/스텝 불변)
+# 조정 레버 — 상단 고정 바 (엑셀 첫 행 틀고정 스타일)
+#   사이드바 대신 본문 상단 sticky 컨테이너: 스크롤해도 항상 화면 위에 보인다.
+#   위젯 key/값 범위/스텝은 기존 사이드바 시절과 동일(스냅샷 복원 호환).
 # =============================================================
-with st.sidebar:
-    st.markdown('<span class="posco-mark">POSCO</span>', unsafe_allow_html=True)
-    st.header("조정 레버")
-    years = st.slider("추계 연수", 1, 15, step=1, key="k_years",
-                      help="1년(내년만)부터 가능. 가벼운 단기 시뮬은 1~2년으로.")
+with st.container(key="lever_bar"):
+    bar = st.columns([1.5, 1.0, 1.0, 1.1, 1.1], vertical_alignment="bottom")
+    with bar[0]:
+        years = st.slider("추계 연수", 1, 15, step=1, key="k_years",
+                          help="1년(내년만)부터 가능. 가벼운 단기 시뮬은 1~2년으로.")
+    with bar[1]:
+        promo_pct = st.number_input("승진율 조정 (%)", min_value=-50.0, max_value=100.0,
+                                    step=0.1, format="%.1f", key="k_promo",
+                                    help="baseline 승진율 대비 배율. +2.2 이면 승진율 ×1.022. "
+                                         "소수점 입력 가능. 재직률이 음수가 되지 않도록 "
+                                         "(1-퇴직률) 이하로 자동 제한.")
+    with bar[2]:
+        attr_pct = st.number_input("퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
+                                   step=0.1, format="%.1f", key="k_attr",
+                                   help="baseline 퇴직률 대비 배율. -2.5 이면 퇴직률 ×0.975. "
+                                        "소수점 입력 가능.")
+    with bar[3]:
+        raise_by_tier = {}
+        # 5개 티어 입력은 popover 로 접어 바 높이를 낮게 유지(모바일에서도 sticky 유지).
+        with st.popover("직급별 연 인상률", use_container_width=True):
+            st.caption("직급 티어(하위→상위)별로 단가 인상률을 다르게 준다. "
+                       "baseline=전 직급 0% 기준이라 올린 만큼 누적 Δ가 +로 잡힘. "
+                       "매년 단가=단가×(1+인상률)^연차.")
+            for _t in TIER_ORDER:
+                raise_by_tier[_t] = st.number_input(
+                    f"{_t} 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
+                    format="%.2f", key=f"k_raise_{_t}",
+                    help="예: 중위(중간관리)만 5%로 올려 이탈 방지 시뮬. 소수점 입력 가능(최대 10%).")
+    with bar[4]:
+        view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
+                             help="차트=클릭 확대 없이 정적으로 표시 / 표=숫자만")
 
-    st.divider()
-    st.subheader("승진율")
-    promo_pct = st.number_input("승진율 조정 (%, baseline 대비)", min_value=-50.0, max_value=100.0,
-                                step=0.1, format="%.1f", key="k_promo",
-                                help="baseline 승진율 대비 배율. +2.2 이면 승진율 ×1.022. "
-                                     "소수점 입력 가능. 재직률이 음수가 되지 않도록 "
-                                     "(1-퇴직률) 이하로 자동 제한.")
-
-    st.subheader("퇴직률")
-    attr_pct = st.number_input("퇴직률 조정 (%, baseline 대비)", min_value=-50.0, max_value=100.0,
-                               step=0.1, format="%.1f", key="k_attr",
-                               help="baseline 퇴직률 대비 배율. -2.5 이면 퇴직률 ×0.975. 소수점 입력 가능.")
-
-    st.subheader("직급별 연 인상률")
-    st.caption("직급 티어(하위→상위)별로 단가 인상률을 다르게 준다. "
-               "baseline=전 직급 0% 기준이라 올린 만큼 누적 Δ가 +로 잡힘. "
-               "매년 단가=단가×(1+인상률)^연차.")
-    raise_by_tier = {}
-    for _t in TIER_ORDER:
-        raise_by_tier[_t] = st.number_input(
-            f"{_t} 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
-            format="%.2f", key=f"k_raise_{_t}",
-            help="예: 중위(중간관리)만 5%로 올려 이탈 방지 시뮬. 소수점 입력 가능(최대 10%).")
-
-    st.divider()
-    view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
-                         help="차트=클릭 확대 없이 정적으로 표시 / 표=숫자만")
-
-    st.divider()
     _r_min, _r_max = min(raise_by_tier.values()), max(raise_by_tier.values())
     _r_txt = f"{_r_min:g}%" if _r_min == _r_max else f"{_r_min:g}~{_r_max:g}%"
     st.caption(
         f"승진율 배율 ×{1 + promo_pct/100:.2f} · "
         f"퇴직률 배율 ×{1 + attr_pct/100:.2f} · "
-        f"인상률 {_r_txt}"
+        f"인상률 {_r_txt} · © POSCO HR PoC · 더미데이터 기반 목업"
     )
-    st.caption("© POSCO HR PoC · 더미데이터 기반 목업")
 
 SHOW_TABLE = view_mode == "표(숫자)"
 
