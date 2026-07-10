@@ -249,69 +249,103 @@ render_header()
 
 
 # =============================================================
-# 조정 레버 — 상단 고정 바 (엑셀 첫 행 틀고정 스타일)
+# 조정 레버 — 상단 고정 바 (엑셀 첫 행 틀고정 스타일) + 접기 토글
 #   승진율·퇴직률·인상률은 직급별(popover), 퇴직률은 나이별 추가.
+#   ★ 접기: 위젯을 조건부로 없애면 Streamlit 이 위젯 상태를 지워 입력값이
+#   초기화되므로, 위젯은 항상 렌더하되 CSS(display:none)로만 숨긴다.
 # =============================================================
-with st.container(key="lever_bar"):
-    bar = st.columns([1.4, 1.0, 1.0, 1.0, 0.9, 1.0], vertical_alignment="bottom")
-    with bar[0]:
-        years = st.slider("추계 연수", 1, 15, step=1, key="k_years",
-                          help="1년(내년만)부터 가능. 가벼운 단기 시뮬은 1~2년으로.")
-    with bar[1]:
-        promo_by_grade: dict[str, float] = {}
-        with st.popover("승진율 조정", use_container_width=True):
-            st.caption("승진율은 직급별로 다르다(baseline: 사원 16%→리더 5%, 부장 0%). "
-                       "직급별로 baseline 대비 배율(%)을 조정. +10 이면 그 직급 승진율 ×1.10. "
-                       "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
-            for _g in GRADE_ORDER[:-1]:   # 부장은 승진 대상 아님(임원 미고려)
-                promo_by_grade[_g] = st.number_input(
-                    f"{_g} 승진율 조정 (%)", min_value=-50.0, max_value=100.0,
-                    step=0.5, format="%.1f", key=f"k_promo_{_g}")
-            promo_by_grade["부장"] = 0.0
-    with bar[2]:
-        attr_by_grade: dict[str, float] = {}
-        attr_by_age: dict[str, float] = {}
-        with st.popover("퇴직률 조정", use_container_width=True):
-            st.caption("(예측) 퇴직률을 직급별 × 나이별로 조정한다. "
-                       "나이별 조정은 직급별 나이 구성비(가정값)로 가중해 직급별 배율에 합성. "
-                       "정년퇴직(나이 기인)분은 하한으로 보호되어 배율로 줄어들지 않음.")
-            st.markdown("**직급별 조정 (%)**")
-            for _g in GRADE_ORDER:
-                attr_by_grade[_g] = st.number_input(
-                    f"{_g} 퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
-                    step=0.5, format="%.1f", key=f"k_attr_{_g}")
-            st.markdown("**나이별 조정 (%)**")
-            for _a in AGE_BANDS:
-                attr_by_age[_a] = st.number_input(
-                    f"{_a} 퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
-                    step=0.5, format="%.1f", key=f"k_attr_age_{_a}",
-                    help="예: 30대 이탈 심화 가정 → 30대 +10%. "
-                         "직급별 나이 구성비를 가중치로 반영.")
-    with bar[3]:
-        raise_by_grade: dict[str, float] = {}
-        with st.popover("직급별 인상률", use_container_width=True):
-            st.caption("직급(사원→부장)별로 단가 인상률을 다르게 준다. "
-                       "baseline=전 직급 0% 기준이라 올린 만큼 누적 Δ가 +로 잡힘. "
-                       "매년 단가=단가×(1+인상률)^연차.")
-            for _g in GRADE_ORDER:
-                raise_by_grade[_g] = st.number_input(
-                    f"{_g} 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
-                    format="%.2f", key=f"k_raise_{_g}",
-                    help="예: 과장·차장(허리)만 5%로 올려 이탈 방지 시뮬. 소수점 입력 가능.")
-    with bar[4]:
-        rehire_pct = st.number_input("정년 재채용률 (%)", min_value=0.0, max_value=100.0,
-                                     step=5.0, format="%.0f", key="k_rehire",
-                                     help=f"정년퇴직자 중 촉탁 재채용 비율. "
-                                          f"baseline {DEFAULT_REHIRE_PCT:g}%. "
-                                          f"재채용 인원은 같은 직급으로 복귀.")
-    with bar[5]:
-        view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
-                             help="차트=클릭 확대 없이 정적으로 표시 / 표=숫자만")
-
-    st.caption(
-        f"현재 조정: {lever_desc(promo_by_grade, attr_by_grade, attr_by_age, raise_by_grade, rehire_pct)}"
-        f" · © POSCO HR PoC · 더미데이터 기반 목업"
+def _lever_summary_from_state() -> str:
+    """접힘 헤더용 — 위젯 생성 전이므로 session_state 에서 직접 현재 값을 읽는다."""
+    return lever_desc(
+        {g: float(st.session_state.get(f"k_promo_{g}", 0.0)) for g in GRADE_ORDER},
+        {g: float(st.session_state.get(f"k_attr_{g}", 0.0)) for g in GRADE_ORDER},
+        {a: float(st.session_state.get(f"k_attr_age_{a}", 0.0)) for a in AGE_BANDS},
+        {g: float(st.session_state.get(f"k_raise_{g}", 0.0)) for g in GRADE_ORDER},
+        float(st.session_state.get("k_rehire", DEFAULT_REHIRE_PCT)),
     )
+
+
+st.session_state.setdefault("k_lever_fold", False)
+
+with st.container(key="lever_bar"):
+    head = st.columns([6, 1.3], vertical_alignment="center")
+    with head[0]:
+        if st.session_state["k_lever_fold"]:
+            st.caption(f"조정 레버 접힘 — 연수 {st.session_state.get('k_years', 5)}년 · "
+                       f"{_lever_summary_from_state()}")
+        else:
+            st.caption("**조정 레버** — 스크롤을 따라오는 틀고정 바. "
+                       "조정을 안 할 때는 오른쪽 [접어두기]로 접을 수 있습니다.")
+    with head[1]:
+        lever_folded = st.toggle("접어두기", key="k_lever_fold",
+                                 help="레버 입력영역을 접어 화면 가림을 줄입니다. "
+                                      "접어도 설정한 값은 그대로 유지·적용됩니다.")
+
+    with st.container(key="lever_body"):
+        bar = st.columns([1.4, 1.0, 1.0, 1.0, 0.9, 1.0], vertical_alignment="bottom")
+        with bar[0]:
+            years = st.slider("추계 연수", 1, 15, step=1, key="k_years",
+                              help="1년(내년만)부터 가능. 가벼운 단기 시뮬은 1~2년으로.")
+        with bar[1]:
+            promo_by_grade: dict[str, float] = {}
+            with st.popover("승진율 조정", use_container_width=True):
+                st.caption("승진율은 직급별로 다르다(baseline: 사원 16%→리더 5%, 부장 0%). "
+                           "직급별로 baseline 대비 배율(%)을 조정. +10 이면 그 직급 승진율 ×1.10. "
+                           "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
+                for _g in GRADE_ORDER[:-1]:   # 부장은 승진 대상 아님(임원 미고려)
+                    promo_by_grade[_g] = st.number_input(
+                        f"{_g} 승진율 조정 (%)", min_value=-50.0, max_value=100.0,
+                        step=0.5, format="%.1f", key=f"k_promo_{_g}")
+                promo_by_grade["부장"] = 0.0
+        with bar[2]:
+            attr_by_grade: dict[str, float] = {}
+            attr_by_age: dict[str, float] = {}
+            with st.popover("퇴직률 조정", use_container_width=True):
+                st.caption("(예측) 퇴직률을 직급별 × 나이별로 조정한다. "
+                           "나이별 조정은 직급별 나이 구성비(가정값)로 가중해 직급별 배율에 합성. "
+                           "정년퇴직(나이 기인)분은 하한으로 보호되어 배율로 줄어들지 않음.")
+                st.markdown("**직급별 조정 (%)**")
+                for _g in GRADE_ORDER:
+                    attr_by_grade[_g] = st.number_input(
+                        f"{_g} 퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
+                        step=0.5, format="%.1f", key=f"k_attr_{_g}")
+                st.markdown("**나이별 조정 (%)**")
+                for _a in AGE_BANDS:
+                    attr_by_age[_a] = st.number_input(
+                        f"{_a} 퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
+                        step=0.5, format="%.1f", key=f"k_attr_age_{_a}",
+                        help="예: 30대 이탈 심화 가정 → 30대 +10%. "
+                             "직급별 나이 구성비를 가중치로 반영.")
+        with bar[3]:
+            raise_by_grade: dict[str, float] = {}
+            with st.popover("직급별 인상률", use_container_width=True):
+                st.caption("직급(사원→부장)별로 단가 인상률을 다르게 준다. "
+                           "baseline=전 직급 0% 기준이라 올린 만큼 누적 Δ가 +로 잡힘. "
+                           "매년 단가=단가×(1+인상률)^연차.")
+                for _g in GRADE_ORDER:
+                    raise_by_grade[_g] = st.number_input(
+                        f"{_g} 인상률 (%)", min_value=0.0, max_value=10.0, step=0.05,
+                        format="%.2f", key=f"k_raise_{_g}",
+                        help="예: 과장·차장(허리)만 5%로 올려 이탈 방지 시뮬. 소수점 입력 가능.")
+        with bar[4]:
+            rehire_pct = st.number_input("정년 재채용률 (%)", min_value=0.0, max_value=100.0,
+                                         step=5.0, format="%.0f", key="k_rehire",
+                                         help=f"정년퇴직자 중 촉탁 재채용 비율. "
+                                              f"baseline {DEFAULT_REHIRE_PCT:g}%. "
+                                              f"재채용 인원은 같은 직급으로 복귀.")
+        with bar[5]:
+            view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
+                                 help="차트=클릭 확대 없이 정적으로 표시 / 표=숫자만")
+
+        st.caption(
+            f"현재 조정: {lever_desc(promo_by_grade, attr_by_grade, attr_by_age, raise_by_grade, rehire_pct)}"
+            f" · © POSCO HR PoC · 더미데이터 기반 목업"
+        )
+
+# 접힘 상태: 위젯 트리는 그대로 두고(값 유지) 입력영역만 시각적으로 숨긴다.
+if lever_folded:
+    st.markdown("<style>.st-key-lever_body{ display:none !important; }</style>",
+                unsafe_allow_html=True)
 
 SHOW_TABLE = view_mode == "표(숫자)"
 
