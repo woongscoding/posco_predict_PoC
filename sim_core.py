@@ -28,7 +28,8 @@ FAMILY_LEVELS: dict[str, list[str]] = {
     "E": ["E1", "E2", "E3", "E4", "E5", "E6", "E7"],
     "A": ["A1", "A2", "A3"],
 }
-FAMILY_LABEL = {"P": "Professional", "R": "Research", "E": "Engineering", "A": "Admin"}
+# 직군 표기는 코드 그대로(P/R/E/A). 영문 풀네임은 임의 추론이라 표시에 쓰지 않는다.
+FAMILY_LABEL = {"P": "P", "R": "R", "E": "E", "A": "A"}
 
 
 @dataclass

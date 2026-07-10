@@ -821,7 +821,7 @@ for _f in sc.FAMILY_LEVELS:
     _lvls = sc.FAMILY_LEVELS[_f]
     for _i, _lvl in enumerate(_lvls):
         _rate_rows.append({
-            "직군": f"{_f} ({sc.FAMILY_LABEL[_f]})",
+            "직군": _f,
             "단계": _lvl,
             "직급": _tier_of(_i, len(_lvls)),
             "승진율 baseline": f"{base_params.promotion_rate[_f][_lvl] * 100:.1f}%",
