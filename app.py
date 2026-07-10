@@ -652,7 +652,65 @@ st.markdown(
     unsafe_allow_html=True)
 
 # =============================================================
-# ② 좌우 비교 — baseline ↔ 시뮬 (시뮬레이션 결과 본체 — KPI 바로 아래 최상단)
+# ② 직급 구조 실루엣 (최상단 결과) — 조회 연도 + 해당 연도 절대값·Δ
+# =============================================================
+st.markdown("### 직급 구조 실루엣")
+_sil_years = list(range(len(sim.headcount_by_year)))
+sel_t = st.select_slider("조회 연도", options=_sil_years, value=_sil_years[-1],
+                         format_func=year_label, key=f"k_sel_year_{years}",
+                         help="좌우로 움직이면 연도별 지표와 직급 구조 실루엣이 함께 갱신됩니다.")
+
+# 선택 연도의 절대값 + 변화값 (총원 · 인건비)
+_hc_b_t = sc.total_headcount(baseline.headcount_by_year[sel_t])
+_hc_s_t = sc.total_headcount(sim.headcount_by_year[sel_t])
+_ct_b_t = baseline.labor_cost_by_year[sel_t] / 1e8
+_ct_s_t = sim.labor_cost_by_year[sel_t] / 1e8
+y1, y2, y3, y4 = st.columns(4)
+y1.metric(f"{year_label(sel_t)} 총원 (BASELINE)", f"{_hc_b_t:,.0f}명")
+y2.metric(f"{year_label(sel_t)} 총원 (시뮬)", f"{_hc_s_t:,.0f}명",
+          delta=f"{_hc_s_t - _hc_b_t:+,.0f}명")
+y3.metric(f"{year_label(sel_t)} 인건비 (BASELINE)", f"{_ct_b_t:,.0f}억")
+y4.metric(f"{year_label(sel_t)} 인건비 (시뮬)", f"{_ct_s_t:,.0f}억",
+          delta=f"{_ct_s_t - _ct_b_t:+,.0f}억", delta_color="inverse")
+
+st.caption("직급(사원→부장) 기준 중앙정렬 실루엣. 연도는 위 [조회 연도]를 따라갑니다. "
+           "왼쪽 BASELINE 은 연도를 따로 선택할 수 있어 교차 비교도 가능합니다"
+           f"(예: baseline {BASE_YEAR + 1} ↔ 시뮬 {BASE_YEAR + 1}, "
+           f"baseline {BASE_YEAR + 1} ↔ 시뮬 {BASE_YEAR + years}). "
+           "시뮬 막대 라벨은 '절대 인원 (같은 연도 baseline 대비 Δ)'. "
+           "허리(과장·차장=중간관리 계층)가 얇으면 모래시계형.")
+sil_l, sil_r = st.columns(2)
+with sil_l:
+    # BASELINE 연도 선택 — 기본은 상단 조회 연도와 동기화. key 에 sel_t 를 포함해
+    # 조회 연도를 움직이면 이 선택도 함께 리셋(동기화)된다.
+    base_t = st.selectbox("BASELINE 연도", _sil_years, index=sel_t,
+                          format_func=year_label, key=f"k_sil_base_{years}_{sel_t}",
+                          help="기본은 조회 연도와 동일. 바꾸면 서로 다른 연도끼리 교차 비교.")
+with sil_r:
+    st.selectbox("시뮬 연도", [sel_t], index=0, format_func=year_label,
+                 key=f"k_sil_sim_{years}_{sel_t}", disabled=True,
+                 help="시뮬 쪽은 위 [조회 연도] 고정입니다.")
+# 좌우 같은 가로 스케일 — 각자 선택된 연도의 양쪽 직급 최대값 기준.
+_sil_max = max(
+    max(tier_distribution(baseline.headcount_by_year[base_t]).values()),
+    max(tier_distribution(sim.headcount_by_year[sel_t]).values()))
+with sil_l:
+    st.plotly_chart(shape_silhouette(baseline.headcount_by_year[base_t],
+                                     f"BASELINE · {year_label(base_t)}", C_BASE,
+                                     x_max=_sil_max),
+                    use_container_width=True, key="sil_base", config=PLOTLY_CONFIG)
+with sil_r:
+    st.plotly_chart(shape_silhouette(sim.headcount_by_year[sel_t],
+                                     f"시뮬 · {year_label(sel_t)}", C_BLUE,
+                                     x_max=_sil_max,
+                                     ref=baseline.headcount_by_year[sel_t]),
+                    use_container_width=True, key="sil_sim", config=PLOTLY_CONFIG)
+
+st.divider()
+
+
+# =============================================================
+# ③ 좌우 비교 — baseline ↔ 시뮬
 # =============================================================
 st.markdown("### baseline ↔ 시뮬 좌우 비교")
 st.caption(f"기준연도 = 올해({BASE_YEAR}) 현재 인원 스냅샷. 승진율·퇴직률·인상률 조정 효과는 "
@@ -712,63 +770,6 @@ mc3.metric("누적 Δ (vs baseline)", f"{cum_diff / 1e8:+,.0f}억",
            delta=f"{cum_pct:+.2f}%", delta_color="inverse")
 st.caption(f"baseline 누적 {cum_base / 1e8:,.0f}억 → 시뮬 {cum_sim / 1e8:,.0f}억 "
            f"(Δ {cum_diff / 1e8:+,.0f}억, {cum_pct:+.2f}%)")
-
-# =============================================================
-# 연도별 상세 — 조회 연도 + 해당 연도 절대값·Δ + 직급 구조 실루엣
-# =============================================================
-st.divider()
-_sil_years = list(range(len(sim.headcount_by_year)))
-sel_t = st.select_slider("조회 연도", options=_sil_years, value=_sil_years[-1],
-                         format_func=year_label, key=f"k_sel_year_{years}",
-                         help="좌우로 움직이면 아래 연도별 지표와 직급 구조 실루엣이 함께 갱신됩니다.")
-
-# 선택 연도의 절대값 + 변화값 (총원 · 인건비)
-_hc_b_t = sc.total_headcount(baseline.headcount_by_year[sel_t])
-_hc_s_t = sc.total_headcount(sim.headcount_by_year[sel_t])
-_ct_b_t = baseline.labor_cost_by_year[sel_t] / 1e8
-_ct_s_t = sim.labor_cost_by_year[sel_t] / 1e8
-y1, y2, y3, y4 = st.columns(4)
-y1.metric(f"{year_label(sel_t)} 총원 (BASELINE)", f"{_hc_b_t:,.0f}명")
-y2.metric(f"{year_label(sel_t)} 총원 (시뮬)", f"{_hc_s_t:,.0f}명",
-          delta=f"{_hc_s_t - _hc_b_t:+,.0f}명")
-y3.metric(f"{year_label(sel_t)} 인건비 (BASELINE)", f"{_ct_b_t:,.0f}억")
-y4.metric(f"{year_label(sel_t)} 인건비 (시뮬)", f"{_ct_s_t:,.0f}억",
-          delta=f"{_ct_s_t - _ct_b_t:+,.0f}억", delta_color="inverse")
-
-st.markdown("#### 직급 구조 실루엣")
-st.caption("직급(사원→부장) 기준 중앙정렬 실루엣. 연도는 상단 [조회 연도]를 따라갑니다. "
-           "왼쪽 BASELINE 은 연도를 따로 선택할 수 있어 교차 비교도 가능합니다"
-           f"(예: baseline {BASE_YEAR + 1} ↔ 시뮬 {BASE_YEAR + 1}, "
-           f"baseline {BASE_YEAR + 1} ↔ 시뮬 {BASE_YEAR + years}). "
-           "시뮬 막대 라벨은 '절대 인원 (같은 연도 baseline 대비 Δ)'. "
-           "허리(과장·차장=중간관리 계층)가 얇으면 모래시계형.")
-sil_l, sil_r = st.columns(2)
-with sil_l:
-    # BASELINE 연도 선택 — 기본은 상단 조회 연도와 동기화. key 에 sel_t 를 포함해
-    # 조회 연도를 움직이면 이 선택도 함께 리셋(동기화)된다.
-    base_t = st.selectbox("BASELINE 연도", _sil_years, index=sel_t,
-                          format_func=year_label, key=f"k_sil_base_{years}_{sel_t}",
-                          help="기본은 조회 연도와 동일. 바꾸면 서로 다른 연도끼리 교차 비교.")
-with sil_r:
-    st.selectbox("시뮬 연도", [sel_t], index=0, format_func=year_label,
-                 key=f"k_sil_sim_{years}_{sel_t}", disabled=True,
-                 help="시뮬 쪽은 상단 [조회 연도] 고정입니다.")
-# 좌우 같은 가로 스케일 — 각자 선택된 연도의 양쪽 직급 최대값 기준.
-_sil_max = max(
-    max(tier_distribution(baseline.headcount_by_year[base_t]).values()),
-    max(tier_distribution(sim.headcount_by_year[sel_t]).values()))
-with sil_l:
-    st.plotly_chart(shape_silhouette(baseline.headcount_by_year[base_t],
-                                     f"BASELINE · {year_label(base_t)}", C_BASE,
-                                     x_max=_sil_max),
-                    use_container_width=True, key="sil_base", config=PLOTLY_CONFIG)
-with sil_r:
-    st.plotly_chart(shape_silhouette(sim.headcount_by_year[sel_t],
-                                     f"시뮬 · {year_label(sel_t)}", C_BLUE,
-                                     x_max=_sil_max,
-                                     ref=baseline.headcount_by_year[sel_t]),
-                    use_container_width=True, key="sil_sim", config=PLOTLY_CONFIG)
-
 
 # =============================================================
 # ③ 정년 재채용 인원 (연도별)
