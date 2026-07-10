@@ -560,7 +560,8 @@ def tier_distribution(hc_year: dict[str, dict[str, float]]) -> dict[str, float]:
 
 def shape_silhouette(hc_year: dict[str, dict[str, float]], title: str,
                      color: str, x_max: float | None = None,
-                     ref: dict[str, dict[str, float]] | None = None) -> go.Figure:
+                     ref: dict[str, dict[str, float]] | None = None,
+                     height: int = 300) -> go.Figure:
     """x_max: 좌(baseline)·우(시뮬)를 같은 가로 스케일로 그려 폭을 직접 비교할 때 지정.
     ref: 비교 기준 연도 인원(보통 같은 연도의 baseline). 주면 막대 라벨이
          '절대 인원 (기준 대비 Δ)' 로 표시된다."""
@@ -578,7 +579,7 @@ def shape_silhouette(hc_year: dict[str, dict[str, float]], title: str,
         text=labels, textposition="outside",
         cliponaxis=False, hovertemplate="%{y} %{x:,.0f}명<extra></extra>",
     ))
-    _style(fig, 300, title)
+    _style(fig, height, title)
     _max = x_max if x_max is not None else (max(vals) if vals else 1)
     _max = _max or 1
     fig.update_layout(showlegend=False,
@@ -904,7 +905,21 @@ else:
             final_rows.append(row)
         st.dataframe(pd.DataFrame(final_rows), use_container_width=True, hide_index=True)
     else:
-        st.markdown("#### 미니차트 (스냅샷별 인력구조 · 인건비)")
+        # 스냅샷 비교의 기준 뷰 = 직급 구조 실루엣.
+        #   각 스냅샷의 최종연도 구조를 같은 가로 스케일로 나란히 — 어떤 레버 조합이
+        #   허리(과장·차장)를 얼마나 채우는지 실루엣 폭으로 직접 대조한다.
+        @st.cache_data(show_spinner=False)
+        def _baseline_end_hc(years_: int):
+            """동일 horizon 무조정 baseline 의 최종연도 인원(실루엣 Δ 라벨 기준).
+            build_default_params 는 순수 상수 함수라 동일 years 에서 항상 같은 값."""
+            return sc.run(sc.build_default_params(years=years_)).headcount_by_year[-1]
+
+        st.markdown("#### 실루엣 비교 (스냅샷별 최종연도 직급 구조 · 인건비)")
+        st.caption("막대 라벨은 절대 인원 (같은 연수의 무조정 baseline 대비 Δ). "
+                   "가로 스케일은 전 스냅샷 공통이라 실루엣 폭을 그대로 비교할 수 있습니다.")
+        _snap_max = max(
+            max(tier_distribution(s.result.headcount_by_year[-1]).values())
+            for s in snaps)
         PER_ROW = 4
         for start in range(0, len(snaps), PER_ROW):
             row = snaps[start:start + PER_ROW]
@@ -912,9 +927,14 @@ else:
             for s, col in zip(row, cols):
                 with col:
                     st.markdown(f"**{s.label}**")
-                    st.plotly_chart(area_by_family(s.result, "", height=180, showlegend=False),
-                                    use_container_width=True, key=f"mini_area_{s.snapshot_id}",
-                                    config=PLOTLY_CONFIG)
+                    st.plotly_chart(
+                        shape_silhouette(s.result.headcount_by_year[-1],
+                                         f"{year_label(s.controls['years'])} · {s.controls['years']}년 후",
+                                         C_BLUE, x_max=_snap_max,
+                                         ref=_baseline_end_hc(s.controls["years"]),
+                                         height=230),
+                        use_container_width=True, key=f"mini_sil_{s.snapshot_id}",
+                        config=PLOTLY_CONFIG)
                     st.plotly_chart(mini_cost(s.result), use_container_width=True,
                                     key=f"mini_cost_{s.snapshot_id}", config=PLOTLY_CONFIG)
 
