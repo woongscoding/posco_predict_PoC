@@ -145,8 +145,8 @@ class Adjustments:
     - attrition_scale: 퇴직률 배율 (1.0 = 변화 없음)
     - raise_rate: 인건비 인상률(절대값). None 이면 baseline 값 유지.
     - promotion_scale_by_family / attrition_scale_by_family: 직군별 세부 배율(선택).
-    - attrition_scale_by_level: {직군:{단계:배율}} 셀 단위 퇴직률 배율(선택).
-      직급별/나이별 퇴직률 조정은 앱에서 이 dict 로 환산해 내려보낸다.
+    - promotion_scale_by_level / attrition_scale_by_level: {직군:{단계:배율}} 셀 단위
+      배율(선택). 직급별/나이별 조정은 앱에서 이 dict 로 환산해 내려보낸다.
     """
     promotion_scale: float = 1.0
     attrition_scale: float = 1.0
@@ -155,6 +155,7 @@ class Adjustments:
     promotion_scale_by_family: dict[str, float] = field(default_factory=dict)
     attrition_scale_by_family: dict[str, float] = field(default_factory=dict)
     attrition_scale_by_level: dict[str, dict[str, float]] | None = None
+    promotion_scale_by_level: dict[str, dict[str, float]] | None = None
 
     def is_identity(self) -> bool:
         return (
@@ -165,6 +166,7 @@ class Adjustments:
             and not self.promotion_scale_by_family
             and not self.attrition_scale_by_family
             and not self.attrition_scale_by_level
+            and not self.promotion_scale_by_level
         )
 
 
@@ -184,12 +186,14 @@ def apply_adjustments(base: SimParams, adj: Adjustments) -> SimParams:
         a_scale = adj.attrition_scale * adj.attrition_scale_by_family.get(f, 1.0)
         p_scale = adj.promotion_scale * adj.promotion_scale_by_family.get(f, 1.0)
         a_by_lvl = (adj.attrition_scale_by_level or {}).get(f, {})
+        p_by_lvl = (adj.promotion_scale_by_level or {}).get(f, {})
         for lvl in base.levels(f):
             a = _clip(attrition[f][lvl] * a_scale * a_by_lvl.get(lvl, 1.0), 0.0, 1.0)
             attrition[f][lvl] = a
             # 승진율은 재직률이 음수가 되지 않도록 (1 - attrition') 이하로 제한
             p_cap = max(0.0, 1.0 - a)
-            promotion[f][lvl] = _clip(promotion[f][lvl] * p_scale, 0.0, p_cap)
+            promotion[f][lvl] = _clip(
+                promotion[f][lvl] * p_scale * p_by_lvl.get(lvl, 1.0), 0.0, p_cap)
 
     _enforce_top_level_zero(promotion)
 
@@ -335,12 +339,11 @@ RETIRE_SHARE = 0.6   # 최상위 단계 이탈 중 정년퇴직 비율(가정값
 REHIRE_RATE = 0.5    # 정년퇴직자 중 재채용 비율(가정값)
 
 
-def rehire_by_year(history: list[dict[str, dict[str, float]]],
-                   attrition_rate: dict[str, dict[str, float]],
-                   retire_share: float = RETIRE_SHARE,
-                   rehire_rate: float = REHIRE_RATE) -> list[float]:
-    """연차별 정년 재채용 인원. [연0(=0), 연1, ..., 연N].
-    연차 t 재채용 = Σ직군 (전년도 최상위 단계 인원 × 그 단계 퇴직률 × 정년비율 × 재채용률)."""
+def retirement_by_year(history: list[dict[str, dict[str, float]]],
+                       attrition_rate: dict[str, dict[str, float]],
+                       retire_share: float = RETIRE_SHARE) -> list[float]:
+    """연차별 정년퇴직 인원. [연0(=0), 연1, ..., 연N].
+    연차 t 정년퇴직 = Σ직군 (전년도 최상위 단계 인원 × 그 단계 퇴직률 × 정년비율)."""
     out = [0.0]
     for t in range(1, len(history)):
         prev = history[t - 1]
@@ -349,9 +352,18 @@ def rehire_by_year(history: list[dict[str, dict[str, float]]],
             top = levels[-1]
             cnt += (prev.get(f, {}).get(top, 0.0)
                     * attrition_rate.get(f, {}).get(top, 0.0)
-                    * retire_share * rehire_rate)
+                    * retire_share)
         out.append(cnt)
     return out
+
+
+def rehire_by_year(history: list[dict[str, dict[str, float]]],
+                   attrition_rate: dict[str, dict[str, float]],
+                   retire_share: float = RETIRE_SHARE,
+                   rehire_rate: float = REHIRE_RATE) -> list[float]:
+    """연차별 정년 재채용 인원 = 정년퇴직 인원 × 재채용률. [연0(=0), 연1, ..., 연N]."""
+    return [v * rehire_rate
+            for v in retirement_by_year(history, attrition_rate, retire_share)]
 
 
 # =============================================================
