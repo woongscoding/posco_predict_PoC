@@ -587,6 +587,9 @@ tot_sim = sc.total_headcount(end_sim)
 top_base = sc.top_level_share(end_base)
 top_sim = sc.top_level_share(end_sim)
 cum_delta = sim.cum_cost_delta_vs_baseline
+# 추계 기간 누적 인건비 총액(기준연~최종연 합) — KPI 는 '총액 (+Δ)' 로 절대값·변화값 병기.
+cum_base = sum(baseline.labor_cost_by_year)
+cum_sim = sum(sim.labor_cost_by_year)
 
 head_gap = tot_sim - tot_base
 top_delta = top_sim - top_base
@@ -602,9 +605,10 @@ _top_arrow = "▲" if top_delta >= 0 else "▼"
 st.markdown(
     f'''
 <div class="kpi-row">
-  <div class="kpi fill"><div class="label">{years}년 누적 인건비 Δ (vs baseline)</div>
-    <div class="value">{cum_delta/1e8:+,.0f}억</div>
-    <div class="delta {_cost_cls}">{_cost_arrow} {_cost_txt}</div></div>
+  <div class="kpi fill"><div class="label">{years}년 누적 인건비 (시뮬 · vs baseline)</div>
+    <div class="value">{cum_sim/1e8:,.0f}억
+      <span style="font-size:20px; font-weight:700;">({cum_delta/1e8:+,.0f}억)</span></div>
+    <div class="delta {_cost_cls}">{_cost_arrow} {_cost_txt} · baseline 누적 {cum_base/1e8:,.0f}억</div></div>
   <div class="kpi"><div class="label">최종연도 총원</div>
     <div class="value">{tot_sim:,.0f}명</div>
     <div class="delta {_head_cls}">{_head_arrow} {head_gap:+,.0f}명</div></div>
@@ -693,9 +697,8 @@ else:
                     key="cost_chart", config=PLOTLY_CONFIG)
 
 # --- 추계 기간 전체 누적 인건비: baseline vs 시뮬 합산 + Δ(금액·비율) 강조 ---
-#     기준연(t=0)~최종연도 합. 인건비 증가는 부담 방향이므로 delta_color="inverse"(+가 빨강).
-cum_base = sum(baseline.labor_cost_by_year)
-cum_sim = sum(sim.labor_cost_by_year)
+#     기준연(t=0)~최종연도 합(cum_base/cum_sim 은 KPI 블록에서 계산).
+#     인건비 증가는 부담 방향이므로 delta_color="inverse"(+가 빨강).
 cum_diff = cum_sim - cum_base
 cum_pct = (cum_diff / cum_base * 100.0) if cum_base else 0.0
 mc1, mc2, mc3 = st.columns(3)
