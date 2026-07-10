@@ -27,51 +27,61 @@ import pandas as pd
 
 import sim_core as sc
 
-# 슬라이더 기본값 = baseline 판정 기준 (sim_app 슬라이더 기본과 일치해야 함).
-#   raise 기본 0.0% 는 build_default_params(raise_rate=0.0) 와 일치.
-DEFAULT_PROMO_PCT = 0
-DEFAULT_ATTR_PCT = 0
-DEFAULT_RAISE_PCT = 0.0
+# 레버 기본값 = baseline 판정 기준 (app.py 위젯 기본과 일치해야 함).
+DEFAULT_REHIRE_PCT = sc.DEFAULT_REHIRE_RATE * 100.0
 
 
 @dataclass
 class Snapshot:
     snapshot_id: str                 # uuid4().hex[:8] — 삭제·복원·중복라벨 구분
     label: str                       # 자동 생성, 수정 가능
-    controls: dict                   # {years, promo_pct, attr_pct, raise_rate_pct} ← 복원 소스
+    controls: dict                   # {years, promo_by_grade, attr_by_grade, attr_by_age,
+                                     #  raise_by_grade, rehire_pct} ← 복원 소스
     adjustments: sc.Adjustments      # 레버 조합 전체 (deepcopy 박제)
     result: sc.SimResult             # 총원·인건비 시계열 + 누적 Δ (deepcopy 박제)
     # 파생 비교 지표 (Δ KPI 와 동일 정의 재사용)
     final_total: float               # 최종연도 총원
     cum_cost_delta: float            # baseline 대비 누적 인건비 Δ (KRW)
-    top_share: float                 # 상위단계 비중(%) — sc.top_level_share 정의
+    top_share: float                 # 부장 비중(%) — sc.top_level_share 정의
 
 
 # =============================================================
-# 라벨 자동 생성 (보완 3)
+# 라벨 자동 생성
 # =============================================================
-def make_label(years: int, promo_pct: float, attr_pct: float,
-               raise_by_tier: dict[str, float] | None = None) -> str:
+def _dict_part(name: str, d: dict[str, float] | None, signed: bool = True) -> str | None:
+    """직급/나이별 dict 레버 → 'name 과장+2%·차장+1%' 요약. 전부 0이면 None.
+    전 항목이 같으면 'name X%' 로 축약."""
+    d = d or {}
+    vals = list(d.values())
+    if not vals or all(abs(v) < 1e-9 for v in vals):
+        return None
+    fmt = "{:+g}%" if signed else "{:g}%"
+    if all(abs(v - vals[0]) < 1e-9 for v in vals):
+        return f"{name} {fmt.format(vals[0])}"
+    nz = [f"{k} {fmt.format(v)}" for k, v in d.items() if abs(v) > 1e-9]
+    return f"{name} " + "·".join(nz)
+
+
+def make_label(years: int,
+               promo_by_grade: dict[str, float] | None = None,
+               attr_by_grade: dict[str, float] | None = None,
+               attr_by_age: dict[str, float] | None = None,
+               raise_by_grade: dict[str, float] | None = None,
+               rehire_pct: float = DEFAULT_REHIRE_PCT) -> str:
     """baseline 과 다른 레버만 골라 라벨 생성. 전부 기본이면 'baseline'.
 
-    - 배율 레버(승진율·퇴직률): 기본 대비 증감 %로. 예 '승진 +30%', '퇴직 -20%'.
-    - 인건비 인상률: 직급 티어별 dict. 전부 같으면 '인상 X%', 티어별로 다르면
-      0 아닌 티어만 나열('인상 중위 5%·상위 1%'). 전부 0이면 생략.
-    - 0 또는 기본값인 레버는 라벨에서 생략.
+    - 승진율·퇴직률: baseline 대비 증감 %. 직급/나이별로 다르면 0 아닌 항목만 나열.
+    - 인건비 인상률: 직급별. 전부 같으면 '인상 X%'.
+    - 재채용률: 기본(30%)과 다를 때만 표기.
     """
-    parts: list[str] = []
-    if abs(promo_pct - DEFAULT_PROMO_PCT) > 1e-9:
-        parts.append(f"승진 {promo_pct:+g}%")
-    if abs(attr_pct - DEFAULT_ATTR_PCT) > 1e-9:
-        parts.append(f"퇴직 {attr_pct:+g}%")
-    rbt = raise_by_tier or {}
-    vals = list(rbt.values())
-    if vals and any(abs(v) > 1e-9 for v in vals):
-        if all(abs(v - vals[0]) < 1e-9 for v in vals):
-            parts.append(f"인상 {vals[0]:g}%")
-        else:
-            nz = [f"{t} {v:g}%" for t, v in rbt.items() if abs(v) > 1e-9]
-            parts.append("인상 " + "·".join(nz))
+    parts = [p for p in (
+        _dict_part("승진", promo_by_grade),
+        _dict_part("퇴직", attr_by_grade),
+        _dict_part("퇴직(연령)", attr_by_age),
+        _dict_part("인상", raise_by_grade, signed=False),
+    ) if p]
+    if abs(rehire_pct - DEFAULT_REHIRE_PCT) > 1e-9:
+        parts.append(f"재채용 {rehire_pct:g}%")
     return " / ".join(parts) if parts else "baseline"
 
 
@@ -125,6 +135,6 @@ def comparison_table(snapshots: list[Snapshot]) -> pd.DataFrame:
             "연수": s.controls["years"],
             "최종연도 총원": f"{s.final_total:,.0f}명",
             "누적 인건비 Δ": delta_txt,
-            "상위단계 비중": f"{s.top_share:.1f}%",
+            "부장 비중": f"{s.top_share:.1f}%",
         })
     return pd.DataFrame(rows)
