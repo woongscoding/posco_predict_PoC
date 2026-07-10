@@ -295,6 +295,24 @@ for _k, _v in SLIDER_DEFAULTS.items():
     st.session_state.setdefault(_k, _v)
 st.session_state.setdefault("snapshots", [])
 
+# ★ 잔존값 방어 — 배포 교체 직후에도 브라우저 세션(session_state)은 살아남는다.
+#   구버전 위젯이 남긴 값이 새 위젯 범위 밖이면 하한(-50 등)으로 튀어 보이므로,
+#   범위 밖/비정상 값은 기본값(0)으로 되돌린다.
+_LEVER_BOUNDS = {"k_promo": (-50.0, 100.0), "k_attr": (-50.0, 100.0)}
+for _t in TIER_ORDER:
+    _LEVER_BOUNDS[f"k_raise_{_t}"] = (0.0, 10.0)
+    _LEVER_BOUNDS[f"k_attr_t_{_t}"] = (-50.0, 100.0)
+for _b in AGE_BANDS:
+    _LEVER_BOUNDS[f"k_attr_a_{_b}"] = (-50.0, 100.0)
+for _k, (_lo, _hi) in _LEVER_BOUNDS.items():
+    try:
+        if not (_lo <= float(st.session_state[_k]) <= _hi):
+            raise ValueError
+    except (TypeError, ValueError):
+        st.session_state[_k] = SLIDER_DEFAULTS[_k]
+if st.session_state.get("k_attr_mode") not in ("전체", "직급별", "나이별"):
+    st.session_state["k_attr_mode"] = "전체"
+
 _pending = st.session_state.pop("_pending_restore", None)
 if _pending:
     st.session_state["k_years"] = int(_pending["years"])
@@ -374,6 +392,13 @@ with st.container(key="lever_bar"):
     with bar[4]:
         view_mode = st.radio("결과 보기 방식", ["차트", "표(숫자)"], horizontal=True,
                              help="차트=클릭 확대 없이 정적으로 표시 / 표=숫자만")
+        if st.button("레버 초기화", use_container_width=True,
+                     help="승진율·퇴직률·인상률을 전부 기본값 0%로 되돌립니다."):
+            st.session_state["_pending_restore"] = {
+                "years": int(st.session_state.get("k_years", 5)),
+                "promo_pct": 0.0, "attr_pct": 0.0, "attr_mode": "전체",
+                "attr_by_tier": {}, "attr_by_age": {}, "raise_by_tier": {}}
+            st.rerun()
 
     attr_desc = attr_summary(attr_mode, attr_pct, attr_by_tier, attr_by_age)
     _r_min, _r_max = min(raise_by_tier.values()), max(raise_by_tier.values())
@@ -626,30 +651,8 @@ st.markdown(
     f'퇴직률 {attr_desc} · 인상률 {raise_summary(raise_by_tier)} · 추계 {years}년</div>',
     unsafe_allow_html=True)
 
-# 조회 연도 — 실루엣·연도별 상세가 이 연도를 따라간다 (연도 토글은 여기 하나만).
-_sil_years = list(range(len(sim.headcount_by_year)))
-sel_t = st.select_slider("조회 연도", options=_sil_years, value=_sil_years[-1],
-                         format_func=year_label, key=f"k_sel_year_{years}",
-                         help="좌우로 움직이면 아래 연도별 지표와 직급 구조 실루엣이 함께 갱신됩니다.")
-
-# 선택 연도의 절대값 + 변화값 (총원 · 인건비)
-_hc_b_t = sc.total_headcount(baseline.headcount_by_year[sel_t])
-_hc_s_t = sc.total_headcount(sim.headcount_by_year[sel_t])
-_ct_b_t = baseline.labor_cost_by_year[sel_t] / 1e8
-_ct_s_t = sim.labor_cost_by_year[sel_t] / 1e8
-y1, y2, y3, y4 = st.columns(4)
-y1.metric(f"{year_label(sel_t)} 총원 (BASELINE)", f"{_hc_b_t:,.0f}명")
-y2.metric(f"{year_label(sel_t)} 총원 (시뮬)", f"{_hc_s_t:,.0f}명",
-          delta=f"{_hc_s_t - _hc_b_t:+,.0f}명")
-y3.metric(f"{year_label(sel_t)} 인건비 (BASELINE)", f"{_ct_b_t:,.0f}억")
-y4.metric(f"{year_label(sel_t)} 인건비 (시뮬)", f"{_ct_s_t:,.0f}억",
-          delta=f"{_ct_s_t - _ct_b_t:+,.0f}억", delta_color="inverse")
-
-st.divider()
-
-
 # =============================================================
-# ② 좌우 비교 — baseline ↔ 시뮬
+# ② 좌우 비교 — baseline ↔ 시뮬 (시뮬레이션 결과 본체 — KPI 바로 아래 최상단)
 # =============================================================
 st.markdown("### baseline ↔ 시뮬 좌우 비교")
 st.caption(f"기준연도 = 올해({BASE_YEAR}) 현재 인원 스냅샷. 승진율·퇴직률·인상률 조정 효과는 "
@@ -709,6 +712,28 @@ mc3.metric("누적 Δ (vs baseline)", f"{cum_diff / 1e8:+,.0f}억",
            delta=f"{cum_pct:+.2f}%", delta_color="inverse")
 st.caption(f"baseline 누적 {cum_base / 1e8:,.0f}억 → 시뮬 {cum_sim / 1e8:,.0f}억 "
            f"(Δ {cum_diff / 1e8:+,.0f}억, {cum_pct:+.2f}%)")
+
+# =============================================================
+# 연도별 상세 — 조회 연도 + 해당 연도 절대값·Δ + 직급 구조 실루엣
+# =============================================================
+st.divider()
+_sil_years = list(range(len(sim.headcount_by_year)))
+sel_t = st.select_slider("조회 연도", options=_sil_years, value=_sil_years[-1],
+                         format_func=year_label, key=f"k_sel_year_{years}",
+                         help="좌우로 움직이면 아래 연도별 지표와 직급 구조 실루엣이 함께 갱신됩니다.")
+
+# 선택 연도의 절대값 + 변화값 (총원 · 인건비)
+_hc_b_t = sc.total_headcount(baseline.headcount_by_year[sel_t])
+_hc_s_t = sc.total_headcount(sim.headcount_by_year[sel_t])
+_ct_b_t = baseline.labor_cost_by_year[sel_t] / 1e8
+_ct_s_t = sim.labor_cost_by_year[sel_t] / 1e8
+y1, y2, y3, y4 = st.columns(4)
+y1.metric(f"{year_label(sel_t)} 총원 (BASELINE)", f"{_hc_b_t:,.0f}명")
+y2.metric(f"{year_label(sel_t)} 총원 (시뮬)", f"{_hc_s_t:,.0f}명",
+          delta=f"{_hc_s_t - _hc_b_t:+,.0f}명")
+y3.metric(f"{year_label(sel_t)} 인건비 (BASELINE)", f"{_ct_b_t:,.0f}억")
+y4.metric(f"{year_label(sel_t)} 인건비 (시뮬)", f"{_ct_s_t:,.0f}억",
+          delta=f"{_ct_s_t - _ct_b_t:+,.0f}억", delta_color="inverse")
 
 st.markdown("#### 직급 구조 실루엣")
 st.caption("직급(사원→부장) 기준 중앙정렬 실루엣. 연도는 상단 [조회 연도]를 따라갑니다. "
