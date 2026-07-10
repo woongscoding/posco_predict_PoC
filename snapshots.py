@@ -64,14 +64,15 @@ def make_label(years: int, promo_pct: float, attr_pct: float,
     - 0 또는 기본값인 레버는 라벨에서 생략.
     - **_extra_controls: controls dict 를 통째로 넘겨도 되게 여분 키는 무시.
     """
+    _ZERO_DESCS = ("0%", "+0%", "-0%", "0%p", "+0%p", "-0%p")
     parts: list[str] = []
     if promo_desc is not None:
-        if promo_desc not in ("0%", "+0%", "-0%"):
+        if promo_desc not in _ZERO_DESCS:
             parts.append(f"승진 {promo_desc}")
     elif abs(promo_pct - DEFAULT_PROMO_PCT) > 1e-9:
         parts.append(f"승진 {promo_pct:+g}%")
     if attr_desc is not None:
-        if attr_desc not in ("0%", "+0%", "-0%"):
+        if attr_desc not in _ZERO_DESCS:
             parts.append(f"퇴직 {attr_desc}")
     elif abs(attr_pct - DEFAULT_ATTR_PCT) > 1e-9:
         parts.append(f"퇴직 {attr_pct:+g}%")

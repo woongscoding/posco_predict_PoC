@@ -41,7 +41,7 @@ import insight_bot
 import dataclasses as _dc
 import importlib as _importlib
 _ADJ_FIELDS = {_f.name for _f in _dc.fields(sc.Adjustments)}
-if not {"attrition_scale_by_level", "promotion_scale_by_level"} <= _ADJ_FIELDS:
+if not {"attrition_delta_by_level", "promotion_delta_by_level"} <= _ADJ_FIELDS:
     _importlib.reload(sc)
     _importlib.reload(snap)
     _importlib.reload(insight_bot)
@@ -109,18 +109,19 @@ def raise_summary(rbt: dict[str, float]) -> str:
     return "직급별(" + " · ".join(parts) + ")" if parts else "0%"
 
 
-def build_scale_by_level(mode: str, by_tier_pct: dict[str, float],
-                         by_age_pct: dict[str, float] | None = None
+def build_delta_by_level(mode: str, by_tier_pctp: dict[str, float],
+                         by_age_pctp: dict[str, float] | None = None
                          ) -> dict[str, dict[str, float]] | None:
-    """직급별/나이별 조정(%) → {직군:{단계:배율}}. '전체' 모드면 None(전역 배율 사용).
+    """직급별/나이별 %p 조정 → {직군:{단계:가감(소수)}}. '전체' 모드면 None(전역 delta 사용).
     승진율(전체/직급별)·퇴직률(전체/직급별/나이별) 공용.
+    ★ 조정은 배율이 아니라 %p 덧셈: 승진율 18% 에 +1 을 주면 19%.
 
-    나이별 모드는 직급 × 연령 구성비(AGE_MIX, 가정 더미)로 가중 평균해 직급별 배율로 환산:
-      단계 배율 = 1 + Σ(연령대 구성비 × 해당 연령대 조정%) / 100
+    나이별 모드는 직급 × 연령 구성비(AGE_MIX, 가정 더미)로 가중 평균해 직급별 %p 로 환산:
+      단계 가감 = Σ(연령대 구성비 × 해당 연령대 %p) / 100
     """
     if mode == "전체":
         return None
-    by_age_pct = by_age_pct or {}
+    by_age_pctp = by_age_pctp or {}
     out: dict[str, dict[str, float]] = {}
     for f, levels in sc.FAMILY_LEVELS.items():
         n = len(levels)
@@ -128,27 +129,27 @@ def build_scale_by_level(mode: str, by_tier_pct: dict[str, float],
         for i, lvl in enumerate(levels):
             tier = _tier_of(i, n)
             if mode == "직급별":
-                pct = by_tier_pct.get(tier, 0.0)
+                pctp = by_tier_pctp.get(tier, 0.0)
             else:  # 나이별
-                pct = sum(AGE_MIX[tier][b] * by_age_pct.get(b, 0.0) for b in AGE_BANDS)
-            d[lvl] = 1.0 + pct / 100.0
+                pctp = sum(AGE_MIX[tier][b] * by_age_pctp.get(b, 0.0) for b in AGE_BANDS)
+            d[lvl] = pctp / 100.0
         out[f] = d
     return out
 
 
-def scale_summary(mode: str, pct: float, by_tier: dict[str, float],
+def scale_summary(mode: str, pctp: float, by_tier: dict[str, float],
                   by_age: dict[str, float] | None = None) -> str:
-    """승진율/퇴직률 조정 설정을 짧게 요약(라벨·캡션·챗봇 컨텍스트 공용)."""
+    """승진율/퇴직률 %p 조정 설정을 짧게 요약(라벨·캡션·챗봇 컨텍스트 공용)."""
     if mode == "전체":
-        return f"{pct:+g}%"
+        return f"{pctp:+g}%p"
     if mode == "직급별":
-        nz = [f"{t} {by_tier.get(t, 0.0):+g}%" for t in TIER_ORDER
+        nz = [f"{t} {by_tier.get(t, 0.0):+g}%p" for t in TIER_ORDER
               if abs(by_tier.get(t, 0.0)) > 1e-9]
-        return "직급별(" + " · ".join(nz) + ")" if nz else "0%"
+        return "직급별(" + " · ".join(nz) + ")" if nz else "0%p"
     by_age = by_age or {}
-    nz = [f"{b} {by_age.get(b, 0.0):+g}%" for b in AGE_BANDS
+    nz = [f"{b} {by_age.get(b, 0.0):+g}%p" for b in AGE_BANDS
           if abs(by_age.get(b, 0.0)) > 1e-9]
-    return "나이별(" + " · ".join(nz) + ")" if nz else "0%"
+    return "나이별(" + " · ".join(nz) + ")" if nz else "0%p"
 
 
 # Streamlit Cloud 배포용: Secrets 에 넣은 키를 환경변수로 브리지(insight_bot 은 os.environ 을 읽음).
@@ -313,16 +314,17 @@ st.session_state.setdefault("snapshots", [])
 # ★ 잔존값 방어 — 배포 교체 직후에도 브라우저 세션(session_state)은 살아남는다.
 #   구버전 위젯이 남긴 값이 새 위젯 범위 밖이면 하한으로 튀어 보이므로,
 #   범위 밖/비정상 값은 기본값(0)으로 되돌린다. 모드 radio 도 옵션 밖이면 '전체'로.
+# 승진율·퇴직률은 %p 가감(±10%p), 인상률은 % 게이지(0~10%).
 _LEVER_BOUNDS: dict = {}
 for _sid, _ in SCENARIOS:
-    _LEVER_BOUNDS[f"k_promo_{_sid}"] = (-50.0, 100.0)
-    _LEVER_BOUNDS[f"k_attr_{_sid}"] = (-30.0, 30.0)
+    _LEVER_BOUNDS[f"k_promo_{_sid}"] = (-10.0, 10.0)
+    _LEVER_BOUNDS[f"k_attr_{_sid}"] = (-10.0, 10.0)
     for _t in TIER_ORDER:
-        _LEVER_BOUNDS[f"k_promo_t_{_t}_{_sid}"] = (-50.0, 100.0)
-        _LEVER_BOUNDS[f"k_attr_t_{_t}_{_sid}"] = (-30.0, 30.0)
+        _LEVER_BOUNDS[f"k_promo_t_{_t}_{_sid}"] = (-10.0, 10.0)
+        _LEVER_BOUNDS[f"k_attr_t_{_t}_{_sid}"] = (-10.0, 10.0)
         _LEVER_BOUNDS[f"k_raise_{_t}_{_sid}"] = (0.0, 10.0)
     for _b in AGE_BANDS:
-        _LEVER_BOUNDS[f"k_attr_a_{_b}_{_sid}"] = (-30.0, 30.0)
+        _LEVER_BOUNDS[f"k_attr_a_{_b}_{_sid}"] = (-10.0, 10.0)
 for _k, (_lo, _hi) in _LEVER_BOUNDS.items():
     try:
         if not (_lo <= float(st.session_state[_k]) <= _hi):
@@ -377,56 +379,57 @@ def render_scenario_levers(sid: str, name: str) -> dict:
     attr_pct = float(st.session_state.get(f"k_attr_{sid}", 0.0))
 
     with c1:
-        # 승진율 조정 — 전체 일괄 / 직급별(사원→리더). 부장은 최상위 승진율 0 고정이라 제외.
+        # 승진율 조정 — %p 가감(덧셈). 전체 일괄 / 직급별(사원→리더).
+        #   부장은 최상위 승진율 0 고정이라 제외.
         with st.popover("승진율", use_container_width=True):
             promo_mode = st.radio("조정 방식", ["전체", "직급별"], horizontal=True,
                                   key=f"k_promo_mode_{sid}",
-                                  help="전체=전 직급 일괄 배율 / 직급별=사원~리더 직급별 배율")
+                                  help="전체=전 직급 일괄 %p 가감 / 직급별=사원~리더 직급별 %p 가감")
             if promo_mode == "전체":
                 promo_pct = st.number_input(
-                    "전체 승진율 조정 (%)", min_value=-50.0, max_value=100.0,
+                    "전체 승진율 조정 (%p)", min_value=-10.0, max_value=10.0,
                     step=0.1, format="%.1f", key=f"k_promo_{sid}",
-                    help="baseline 승진율 대비 배율. 기본 0 = 조정 없음. +20 이면 승진율 ×1.20. "
+                    help="baseline 승진율에 그대로 더합니다. 기본 0 = 조정 없음. "
+                         "예: 승진율 18% 에 +1 → 19%. "
                          "재직률이 음수가 되지 않도록 (1-퇴직률) 이하로 자동 제한.")
             else:
-                st.caption("직급별 승진율 배율. 기본 0 = 조정 없음. "
-                           "예: 대리 +20 = 대리급 승진율 ×1.20 (허리 채우기 시뮬). "
+                st.caption("직급별 승진율 %p 가감. 기본 0 = 조정 없음. "
+                           "예: 대리 +2 = 대리급 승진율 16% → 18% (허리 채우기 시뮬). "
                            "부장(최상위)은 승진율 0 고정이라 제외.")
                 for _t in TIER_ORDER[:-1]:
                     promo_by_tier[_t] = st.number_input(
-                        f"{_t} 승진율 조정 (%)", min_value=-50.0, max_value=100.0,
-                        step=0.5, format="%.1f", key=f"k_promo_t_{_t}_{sid}")
+                        f"{_t} 승진율 조정 (%p)", min_value=-10.0, max_value=10.0,
+                        step=0.1, format="%.1f", key=f"k_promo_t_{_t}_{sid}")
     with c2:
-        # 퇴직률 조정 — 전체 / 직급별(사원→부장) / 나이별(20대→50대+).
-        #   나이별은 직급 × 연령 구성비(AGE_MIX)로 가중해 직급별 배율로 환산된다.
+        # 퇴직률 조정 — %p 가감(덧셈). 전체 / 직급별(사원→부장) / 나이별(20대→50대+).
+        #   나이별은 직급 × 연령 구성비(AGE_MIX)로 가중해 직급별 %p 로 환산된다.
         with st.popover("퇴직률", use_container_width=True):
             attr_mode = st.radio("조정 방식", ["전체", "직급별", "나이별"], horizontal=True,
                                  key=f"k_attr_mode_{sid}",
-                                 help="전체=전 직급 일괄 배율 / 직급별=사원~부장 직급별 배율 / "
-                                      "나이별=연령대별 배율(직급별 연령 구성비로 가중 환산)")
-            # 조정 범위는 현실적인 리텐션/이탈 시나리오 수준인 ±30% 로 제한.
-            #   (0 = 조정 없음. -10 이면 해당 퇴직률 ×0.90. 정합성은 코어가 보장:
+                                 help="전체=전 직급 일괄 %p 가감 / 직급별=사원~부장 직급별 %p 가감 / "
+                                      "나이별=연령대별 %p 가감(직급별 연령 구성비로 가중 환산)")
+            # 조정 범위 ±10%p. (0 = 조정 없음. 정합성은 코어가 보장:
             #    stay = 1 - attrition - promotion 잔차 + stay>=0 셀 단위 클립)
             if attr_mode == "전체":
                 attr_pct = st.number_input(
-                    "전체 퇴직률 조정 (%)", min_value=-30.0, max_value=30.0,
+                    "전체 퇴직률 조정 (%p)", min_value=-10.0, max_value=10.0,
                     step=0.1, format="%.1f", key=f"k_attr_{sid}",
-                    help="baseline 퇴직률 대비 배율. 기본 0 = 조정 없음. "
-                         "-2.5 이면 퇴직률 ×0.975. 소수점 입력 가능.")
+                    help="baseline 퇴직률에 그대로 더합니다. 기본 0 = 조정 없음. "
+                         "예: 퇴직률 14% 에 -1 → 13%.")
             elif attr_mode == "직급별":
-                st.caption("직급별 퇴직률 배율. 기본 0 = 조정 없음. "
-                           "예: 과장 -10 = 과장급 퇴직률 ×0.90 (이탈 방지 시뮬).")
+                st.caption("직급별 퇴직률 %p 가감. 기본 0 = 조정 없음. "
+                           "예: 과장 -1 = 과장급 퇴직률 9% → 8% (이탈 방지 시뮬).")
                 for _t in TIER_ORDER:
                     attr_by_tier[_t] = st.number_input(
-                        f"{_t} 퇴직률 조정 (%)", min_value=-30.0, max_value=30.0,
-                        step=0.5, format="%.1f", key=f"k_attr_t_{_t}_{sid}")
+                        f"{_t} 퇴직률 조정 (%p)", min_value=-10.0, max_value=10.0,
+                        step=0.1, format="%.1f", key=f"k_attr_t_{_t}_{sid}")
             else:
-                st.caption("연령대별 배율. 기본 0 = 조정 없음. 직급별 연령 구성비(가정 더미)로 "
-                           "가중해 직급 배율로 환산.")
+                st.caption("연령대별 %p 가감. 기본 0 = 조정 없음. 직급별 연령 구성비(가정 더미)로 "
+                           "가중해 직급별 %p 로 환산.")
                 for _b in AGE_BANDS:
                     attr_by_age[_b] = st.number_input(
-                        f"{_b} 퇴직률 조정 (%)", min_value=-30.0, max_value=30.0,
-                        step=0.5, format="%.1f", key=f"k_attr_a_{_b}_{sid}")
+                        f"{_b} 퇴직률 조정 (%p)", min_value=-10.0, max_value=10.0,
+                        step=0.1, format="%.1f", key=f"k_attr_a_{_b}_{sid}")
     with c3:
         raise_by_tier = {}
         with st.popover("연 인상률", use_container_width=True):
@@ -500,15 +503,16 @@ def compute_scenario(years: int,
                      attr_mode: str, attr_pct: float,
                      attr_tier_tuple: tuple, attr_age_tuple: tuple,
                      raise_tuple: tuple):
-    # *_tuple: TIER_ORDER/AGE_BANDS 순서의 조정값(%). 캐시 키 안정화를 위해 튜플로 받는다.
+    # *_tuple: TIER_ORDER/AGE_BANDS 순서의 조정값(%p). 캐시 키 안정화를 위해 튜플로 받는다.
+    # ★ 승진율·퇴직률 조정은 %p 덧셈: 예 승진율 18% + 1%p → 19%. (인상률만 % 게이지)
     base_params, baseline = compute_baseline(years)
     adj = sc.Adjustments(
-        # '전체' 모드만 전역 배율, 직급별/나이별은 셀 단위 배율 dict 로 환산해 전달.
-        promotion_scale=(1 + promo_pct / 100.0) if promo_mode == "전체" else 1.0,
-        promotion_scale_by_level=build_scale_by_level(
+        # '전체' 모드만 전역 delta, 직급별/나이별은 셀 단위 delta dict 로 환산해 전달.
+        promotion_delta=(promo_pct / 100.0) if promo_mode == "전체" else 0.0,
+        promotion_delta_by_level=build_delta_by_level(
             promo_mode, dict(zip(TIER_ORDER, promo_tier_tuple))),
-        attrition_scale=(1 + attr_pct / 100.0) if attr_mode == "전체" else 1.0,
-        attrition_scale_by_level=build_scale_by_level(
+        attrition_delta=(attr_pct / 100.0) if attr_mode == "전체" else 0.0,
+        attrition_delta_by_level=build_delta_by_level(
             attr_mode,
             dict(zip(TIER_ORDER, attr_tier_tuple)),
             dict(zip(AGE_BANDS, attr_age_tuple))),
@@ -951,8 +955,9 @@ _pr_fig.update_layout(barmode="group", xaxis_title="직급", yaxis_title="평균
 st.plotly_chart(_pr_fig, use_container_width=True, key="promo_chart", config=PLOTLY_CONFIG)
 
 st.markdown("#### 직군·단계별 승진율·퇴직률 상세")
-st.caption("승진율·퇴직률은 직군·단계별로 전부 다릅니다. 조정 레버는 이 기본표에 배율로 "
-           "적용되며, 시뮬 열이 실제 계산에 들어간 값입니다. (최상위 단계 승진율은 0 고정)")
+st.caption("승진율·퇴직률은 직군·단계별로 전부 다릅니다. 조정 레버는 이 기본표에 %p 로 "
+           "가감되며(예: 18% + 1%p → 19%), 시뮬 열이 실제 계산에 들어간 값입니다. "
+           "(최상위 단계 승진율은 0 고정)")
 _rate_rows = []
 for _f in sc.FAMILY_LEVELS:
     _lvls = sc.FAMILY_LEVELS[_f]
@@ -1175,11 +1180,11 @@ def _prefill_chat() -> list[dict]:
          "content": "그럼 승진율을 올리면 인건비는 얼마나 늘어?"},
         {"role": "assistant",
          "content": (
-             "시뮬1 [승진율]에서 **전체 +10~+30%**, 또는 직급별 모드로 **대리·과장만** 올려 "
-             "보세요. 상위 직급 단가가 높아 누적 인건비 Δ가 KPI 타일에 바로 잡힙니다. "
-             "인건비 부담이 크면 시뮬2 에는 **과장·차장 인상률만 올리는 절충안**을 걸어 "
-             "두 시나리오를 나란히 비교할 수 있어요. 조합별 결과는 [스냅샷 저장]으로 쌓아서 "
-             f"{years}년 horizon 으로 대조하는 걸 추천합니다.")},
+             "시뮬1 [승진율]에서 **전체 +1~+3%p**, 또는 직급별 모드로 **대리·과장만** 올려 "
+             "보세요(예: 승진율 16% → 18%). 상위 직급 단가가 높아 누적 인건비 Δ가 KPI 타일에 "
+             "바로 잡힙니다. 인건비 부담이 크면 시뮬2 에는 **과장·차장 인상률만 올리는 "
+             "절충안**을 걸어 두 시나리오를 나란히 비교할 수 있어요. 조합별 결과는 "
+             f"[스냅샷 저장]으로 쌓아서 {years}년 horizon 으로 대조하는 걸 추천합니다.")},
     ]
 
 

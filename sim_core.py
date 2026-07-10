@@ -147,6 +147,10 @@ class Adjustments:
     - promotion_scale_by_family / attrition_scale_by_family: 직군별 세부 배율(선택).
     - promotion_scale_by_level / attrition_scale_by_level: {직군:{단계:배율}} 셀 단위
       배율(선택). 직급별/나이별 조정은 앱에서 이 dict 로 환산해 내려보낸다.
+    - promotion_delta / attrition_delta: %p 가감(소수 단위 절대값). 예 0.01 = +1%p
+      (승진율 18% → 19%). UI 기본 조정 방식 — 배율보다 직관적이라 v3.1부터 이걸 쓴다.
+    - promotion_delta_by_level / attrition_delta_by_level: {직군:{단계:%p 소수}} 셀 단위 가감.
+      적용 순서는 배율 먼저, 가감 나중: rate' = clip(rate × scale + delta).
     """
     promotion_scale: float = 1.0
     attrition_scale: float = 1.0
@@ -156,6 +160,10 @@ class Adjustments:
     attrition_scale_by_family: dict[str, float] = field(default_factory=dict)
     attrition_scale_by_level: dict[str, dict[str, float]] | None = None
     promotion_scale_by_level: dict[str, dict[str, float]] | None = None
+    promotion_delta: float = 0.0
+    attrition_delta: float = 0.0
+    promotion_delta_by_level: dict[str, dict[str, float]] | None = None
+    attrition_delta_by_level: dict[str, dict[str, float]] | None = None
 
     def is_identity(self) -> bool:
         return (
@@ -167,6 +175,10 @@ class Adjustments:
             and not self.attrition_scale_by_family
             and not self.attrition_scale_by_level
             and not self.promotion_scale_by_level
+            and abs(self.promotion_delta) < 1e-12
+            and abs(self.attrition_delta) < 1e-12
+            and not self.promotion_delta_by_level
+            and not self.attrition_delta_by_level
         )
 
 
@@ -174,8 +186,8 @@ def apply_adjustments(base: SimParams, adj: Adjustments) -> SimParams:
     """조정 레버를 적용한 새 SimParams 반환. stay>=0 을 셀 단위로 보장(클립).
 
     적용 순서:
-      1) 퇴직률 = clip(attrition * scale, 0, 1)
-      2) 승진율 = clip(promotion * scale, 0, 1 - attrition')   # stay>=0 보장
+      1) 퇴직률 = clip(attrition × scale + delta, 0, 1)
+      2) 승진율 = clip(promotion × scale + delta, 0, 1 - attrition')   # stay>=0 보장
       3) 최상위 단계 승진율 0 강제
       4) raise_rate 치환(있으면)
     """
@@ -187,13 +199,19 @@ def apply_adjustments(base: SimParams, adj: Adjustments) -> SimParams:
         p_scale = adj.promotion_scale * adj.promotion_scale_by_family.get(f, 1.0)
         a_by_lvl = (adj.attrition_scale_by_level or {}).get(f, {})
         p_by_lvl = (adj.promotion_scale_by_level or {}).get(f, {})
+        a_d_by_lvl = (adj.attrition_delta_by_level or {}).get(f, {})
+        p_d_by_lvl = (adj.promotion_delta_by_level or {}).get(f, {})
         for lvl in base.levels(f):
-            a = _clip(attrition[f][lvl] * a_scale * a_by_lvl.get(lvl, 1.0), 0.0, 1.0)
+            a_delta = adj.attrition_delta + a_d_by_lvl.get(lvl, 0.0)
+            a = _clip(attrition[f][lvl] * a_scale * a_by_lvl.get(lvl, 1.0) + a_delta,
+                      0.0, 1.0)
             attrition[f][lvl] = a
             # 승진율은 재직률이 음수가 되지 않도록 (1 - attrition') 이하로 제한
             p_cap = max(0.0, 1.0 - a)
+            p_delta = adj.promotion_delta + p_d_by_lvl.get(lvl, 0.0)
             promotion[f][lvl] = _clip(
-                promotion[f][lvl] * p_scale * p_by_lvl.get(lvl, 1.0), 0.0, p_cap)
+                promotion[f][lvl] * p_scale * p_by_lvl.get(lvl, 1.0) + p_delta,
+                0.0, p_cap)
 
     _enforce_top_level_zero(promotion)
 
