@@ -551,13 +551,18 @@ for sid, name in SCENARIOS:
 # 차트 헬퍼 (흰 배경 · 연한 그리드 · Pretendard)
 # =============================================================
 def _style(fig: go.Figure, height: int, title: str | None = None) -> go.Figure:
-    fig.update_layout(
-        title=title or None, height=height,
+    # ★ title 은 있을 때만 설정 — title=None 을 명시적으로 넘기면 새 plotly 렌더러가
+    #   문자 그대로 'undefined' 를 그려 상단에 잘린 텍스트로 보인다.
+    layout = dict(
+        height=height,
         margin=dict(t=40 if title else 12, b=10, l=10, r=10),
         plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
         font=dict(family=FONT_FAMILY, color=C_INK, size=12),
         legend=dict(orientation="h", y=-0.2),
     )
+    if title:
+        layout["title"] = title
+    fig.update_layout(**layout)
     fig.update_xaxes(fixedrange=True, gridcolor=C_GRID, zeroline=False)
     fig.update_yaxes(fixedrange=True, gridcolor=C_GRID, zeroline=False)
     return fig
