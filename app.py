@@ -282,8 +282,11 @@ FAMILY_COLOR = {"P": C_NAVY_DP, "R": "#1B4F8A", "E": C_BLUE_LT, "A": C_BLUE_XLT}
 TIER_COLOR = {"사원": "#BFDCF5", "대리": C_BLUE_XLT, "과장": C_BLUE_LT,
               "차장": C_BLUE, "리더": C_NAVY, "부장": C_NAVY_DP}
 
-# 시나리오 색 — AS-IS 회청 / 시뮬1 블루 / 시뮬2 네이비
-SCN_COLOR = {"asis": C_BASE, "s1": C_BLUE, "s2": C_NAVY}
+# 시나리오 색 — AS-IS 회색 / 시뮬1 하늘(스카이) / 시뮬2 딥블루. 차트·실루엣·KPI 공통.
+SCN_COLOR = {"asis": "#9AA3AF", "s1": C_SKY, "s2": C_BLUE}
+# KPI 강조(fill) 타일 배경 — 시나리오 색 계열 그라데이션으로 구분.
+SCN_FILL = {"s1": "linear-gradient(135deg,#0072CE 0%,#00A0E9 100%)",
+            "s2": "linear-gradient(135deg,#002B5B 0%,#0072CE 100%)"}
 
 # 레버 key ↔ 기본값 (시나리오별 접미사 _s1/_s2). 복원은 이 key 에 값을 써넣고 rerun.
 SLIDER_DEFAULTS: dict = {"k_years": 5}
@@ -726,7 +729,10 @@ for s in scenarios:
     s["cum_delta"] = s["sim"].cum_cost_delta_vs_baseline
     s["end_hc"] = end_s
 
-for s in scenarios:
+# KPI — 시뮬1 | 시뮬2 좌우 분할(아래 실루엣 3열과 같은 수평 배치).
+#   각 열 안에서 누적 인건비 / 최종 총원 / 상위단계 비중 3개 타일을 세로로 쌓는다.
+kpi_cols = st.columns(len(scenarios))
+for s, kcol in zip(scenarios, kpi_cols):
     head_gap = s["tot"] - tot_base
     top_delta = s["top"] - top_base
     cum_delta = s["cum_delta"]
@@ -737,10 +743,12 @@ for s in scenarios:
     _head_arrow = "▲" if head_gap >= 0 else "▼"
     _top_cls = "up" if top_delta >= 0 else "down"
     _top_arrow = "▲" if top_delta >= 0 else "▼"
-    st.markdown(
-        f'''
-<div class="kpi-row">
-  <div class="kpi fill"><div class="label">{s["name"]} · {years}년 누적 인건비 (vs AS-IS)</div>
+    with kcol:
+        st.markdown(
+            f'''
+<div class="kpi-row" style="grid-template-columns:1fr; gap:10px;">
+  <div class="kpi fill" style="background:{SCN_FILL[s["sid"]]};">
+    <div class="label">{s["name"]} · {years}년 누적 인건비 (vs AS-IS)</div>
     <div class="value">{s["cum"]/1e8:,.0f}억
       <span style="font-size:18px; font-weight:700;">({cum_delta/1e8:+,.0f}억)</span></div>
     <div class="delta {_cost_cls}">{_cost_arrow} {_cost_txt} · AS-IS 누적 {cum_base/1e8:,.0f}억</div></div>
@@ -751,7 +759,7 @@ for s in scenarios:
     <div class="value">{s["top"]:.1f}%</div>
     <div class="delta {_top_cls}">{_top_arrow} {top_delta:+.1f}%p (vs AS-IS)</div></div>
 </div>''',
-        unsafe_allow_html=True)
+            unsafe_allow_html=True)
 
 # 적용 변수 요약 (AS-IS / 시뮬1 / 시뮬2 각각 무엇이 걸렸는지 명시)
 _scn_desc = " &nbsp;|&nbsp; ".join(
