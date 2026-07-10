@@ -29,7 +29,7 @@ def _format_snapshots(snaps: list[dict]) -> str:
             else f"{s.get('cum_delta_eok', 0):+,.0f}억"
         lines.append(
             f"  {i}. '{s.get('label')}' — 레버: 승진 {s.get('promo_pct'):+g}% · "
-            f"퇴직 {s.get('attr_pct'):+g}% · 인상 {s.get('raise_desc')} · {s.get('years')}년 / "
+            f"퇴직 {s.get('attr_desc')} · 인상 {s.get('raise_desc')} · {s.get('years')}년 / "
             f"최종총원 {s.get('final_total'):,}명 · 누적인건비Δ {delta} · "
             f"상위비중 {s.get('top_share'):.1f}%"
         )
@@ -40,7 +40,8 @@ def build_system_prompt(ctx: dict) -> str:
     """현재 시뮬 수치를 시스템 프롬프트에 주입(매 턴 최신 값)."""
     fam = " · ".join(f"{f} {v:,}명" for f, v in ctx.get("family_end", {}).items())
     return (
-        "당신은 POSCO HR 인력운영 시뮬레이션을 함께 보는 인력계획 애널리스트입니다. "
+        "당신은 POSCO 의 사내 AI 어시스턴트 'P-GPT'입니다. HR 인력운영 시뮬레이션을 "
+        "함께 보는 인력계획 애널리스트 역할로, "
         "사용자와 한국어로 대화하며, 아래 '현재 시뮬 수치'를 근거로 인사이트를 제시하고 "
         "승진율·퇴직률·인건비 인상률·채용 같은 레버를 어떻게 조정하면 좋을지 구체적으로 제안하세요.\n"
         "원칙:\n"
@@ -50,8 +51,8 @@ def build_system_prompt(ctx: dict) -> str:
         "- 이 데이터는 더미(가정값) 기반 목업임을 감안하세요.\n\n"
         "현재 시뮬 수치:\n"
         f"- 추계 연수: {ctx.get('years')}년\n"
-        f"- 조정 레버: 승진율 {ctx.get('promo_pct'):+g}% · 퇴직률 {ctx.get('attr_pct'):+g}% · "
-        f"인건비 인상률(직급 티어별) {ctx.get('raise_desc')}\n"
+        f"- 조정 레버: 승진율 {ctx.get('promo_pct'):+g}% · 퇴직률 {ctx.get('attr_desc')} · "
+        f"인건비 인상률(직급별) {ctx.get('raise_desc')}\n"
         f"- 최종연도 총원: baseline {ctx.get('tot_base'):,.0f}명 → 시뮬 {ctx.get('tot_sim'):,.0f}명 "
         f"(Δ {ctx.get('tot_sim', 0) - ctx.get('tot_base', 0):+,.0f}명)\n"
         f"- {ctx.get('years')}년 누적 인건비 Δ(vs baseline): {ctx.get('cum_delta_eok'):+,.0f}억\n"
@@ -87,7 +88,7 @@ def rule_reply(messages: list[dict], ctx: dict) -> str:
     cum = ctx.get("cum_delta_eok", 0)
     direction = "증가" if cum >= 0 else "감소"
     return (
-        f"(rule 모드) 현재 조정(승진율 {ctx.get('promo_pct'):+g}% · 퇴직률 {ctx.get('attr_pct'):+g}% · "
+        f"(P-GPT rule 모드) 현재 조정(승진율 {ctx.get('promo_pct'):+g}% · 퇴직률 {ctx.get('attr_desc')} · "
         f"인상률 {ctx.get('raise_desc')}) 기준으로 **{ctx.get('years')}년 후 총원 "
         f"{ctx.get('tot_sim'):,.0f}명**(baseline 대비 {tot_d:+,.0f}명), "
         f"누적 인건비는 baseline 대비 **{cum:+,.0f}억 {direction}**, "

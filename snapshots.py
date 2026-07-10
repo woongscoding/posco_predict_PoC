@@ -51,18 +51,25 @@ class Snapshot:
 # 라벨 자동 생성 (보완 3)
 # =============================================================
 def make_label(years: int, promo_pct: float, attr_pct: float,
-               raise_by_tier: dict[str, float] | None = None) -> str:
+               raise_by_tier: dict[str, float] | None = None,
+               attr_desc: str | None = None, **_extra_controls) -> str:
     """baseline 과 다른 레버만 골라 라벨 생성. 전부 기본이면 'baseline'.
 
     - 배율 레버(승진율·퇴직률): 기본 대비 증감 %로. 예 '승진 +30%', '퇴직 -20%'.
-    - 인건비 인상률: 직급 티어별 dict. 전부 같으면 '인상 X%', 티어별로 다르면
-      0 아닌 티어만 나열('인상 중위 5%·상위 1%'). 전부 0이면 생략.
+    - attr_desc: 앱이 만든 퇴직률 조정 요약(전체/직급별/나이별). 주어지면 attr_pct
+      숫자 대신 이 문자열을 쓴다('0%'/'+0%'면 기본값으로 보고 생략).
+    - 인건비 인상률: 직급별 dict. 전부 같으면 '인상 X%', 직급별로 다르면
+      0 아닌 직급만 나열('인상 과장 5%·부장 1%'). 전부 0이면 생략.
     - 0 또는 기본값인 레버는 라벨에서 생략.
+    - **_extra_controls: controls dict 를 통째로 넘겨도 되게 여분 키는 무시.
     """
     parts: list[str] = []
     if abs(promo_pct - DEFAULT_PROMO_PCT) > 1e-9:
         parts.append(f"승진 {promo_pct:+g}%")
-    if abs(attr_pct - DEFAULT_ATTR_PCT) > 1e-9:
+    if attr_desc is not None:
+        if attr_desc not in ("0%", "+0%", "-0%"):
+            parts.append(f"퇴직 {attr_desc}")
+    elif abs(attr_pct - DEFAULT_ATTR_PCT) > 1e-9:
         parts.append(f"퇴직 {attr_pct:+g}%")
     rbt = raise_by_tier or {}
     vals = list(rbt.values())
