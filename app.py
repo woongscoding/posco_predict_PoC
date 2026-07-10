@@ -34,6 +34,17 @@ import sim_core as sc
 import snapshots as snap
 import insight_bot
 
+# ★ 스테일 모듈 자가 복구 — Streamlit(로컬·Cloud)은 소스가 바뀌면 엔트리 스크립트(app.py)만
+#   다시 실행하고, 이미 import 된 모듈은 프로세스 메모리의 옛 버전을 재사용한다.
+#   배포 갱신 직후 옛 sim_core 가 남아 있으면 Adjustments 에 새 필드가 없어
+#   TypeError(unexpected keyword)로 죽으므로, 새 필드 부재를 감지해 강제 리로드한다.
+#   (reload 는 모듈 객체를 제자리 갱신하므로 snapshots 등 다른 참조도 함께 새 코드를 본다.)
+import dataclasses as _dc
+import importlib as _importlib
+if not any(_f.name == "attrition_scale_by_level" for _f in _dc.fields(sc.Adjustments)):
+    _importlib.reload(sc)
+    _importlib.reload(snap)
+
 st.set_page_config(page_title="POSCO HR 시뮬레이터", layout="wide", page_icon="🔷")
 
 # 추계 연도 라벨: 연차 0 = 올해(기준 스냅샷), 추계·조정 효과는 내년(BASE_YEAR+1)부터 반영.
