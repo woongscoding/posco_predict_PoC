@@ -298,12 +298,12 @@ st.session_state.setdefault("snapshots", [])
 # ★ 잔존값 방어 — 배포 교체 직후에도 브라우저 세션(session_state)은 살아남는다.
 #   구버전 위젯이 남긴 값이 새 위젯 범위 밖이면 하한(-50 등)으로 튀어 보이므로,
 #   범위 밖/비정상 값은 기본값(0)으로 되돌린다.
-_LEVER_BOUNDS = {"k_promo": (-50.0, 100.0), "k_attr": (-50.0, 100.0)}
+_LEVER_BOUNDS = {"k_promo": (-50.0, 100.0), "k_attr": (-30.0, 30.0)}
 for _t in TIER_ORDER:
     _LEVER_BOUNDS[f"k_raise_{_t}"] = (0.0, 10.0)
-    _LEVER_BOUNDS[f"k_attr_t_{_t}"] = (-50.0, 100.0)
+    _LEVER_BOUNDS[f"k_attr_t_{_t}"] = (-30.0, 30.0)
 for _b in AGE_BANDS:
-    _LEVER_BOUNDS[f"k_attr_a_{_b}"] = (-50.0, 100.0)
+    _LEVER_BOUNDS[f"k_attr_a_{_b}"] = (-30.0, 30.0)
 for _k, (_lo, _hi) in _LEVER_BOUNDS.items():
     try:
         if not (_lo <= float(st.session_state[_k]) <= _hi):
@@ -359,22 +359,28 @@ with st.container(key="lever_bar"):
                                  key="k_attr_mode",
                                  help="전체=전 직급 일괄 배율 / 직급별=사원~부장 직급별 배율 / "
                                       "나이별=연령대별 배율(직급별 연령 구성비로 가중 환산)")
+            # 조정 범위는 현실적인 리텐션/이탈 시나리오 수준인 ±30% 로 제한.
+            #   (0 = 조정 없음. -10 이면 해당 퇴직률 ×0.90. 정합성은 코어가 보장:
+            #    stay = 1 - attrition - promotion 잔차 + stay>=0 셀 단위 클립)
             if attr_mode == "전체":
                 attr_pct = st.number_input(
-                    "전체 퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
+                    "전체 퇴직률 조정 (%)", min_value=-30.0, max_value=30.0,
                     step=0.1, format="%.1f", key="k_attr",
-                    help="baseline 퇴직률 대비 배율. -2.5 이면 퇴직률 ×0.975. 소수점 입력 가능.")
+                    help="baseline 퇴직률 대비 배율. 기본 0 = 조정 없음. "
+                         "-2.5 이면 퇴직률 ×0.975. 소수점 입력 가능.")
             elif attr_mode == "직급별":
-                st.caption("직급별로 퇴직률 배율을 다르게 준다. 예: 과장 -10% = 과장급 이탈 방지 시뮬.")
+                st.caption("직급별로 퇴직률 배율을 다르게 준다. 기본 0 = 조정 없음. "
+                           "예: 과장 -10 = 과장급 퇴직률 ×0.90 (이탈 방지 시뮬).")
                 for _t in TIER_ORDER:
                     attr_by_tier[_t] = st.number_input(
-                        f"{_t} 퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
+                        f"{_t} 퇴직률 조정 (%)", min_value=-30.0, max_value=30.0,
                         step=0.5, format="%.1f", key=f"k_attr_t_{_t}")
             else:
-                st.caption("연령대별 배율. 직급별 연령 구성비(가정 더미)로 가중해 직급 배율로 환산.")
+                st.caption("연령대별 배율. 기본 0 = 조정 없음. 직급별 연령 구성비(가정 더미)로 "
+                           "가중해 직급 배율로 환산.")
                 for _b in AGE_BANDS:
                     attr_by_age[_b] = st.number_input(
-                        f"{_b} 퇴직률 조정 (%)", min_value=-50.0, max_value=100.0,
+                        f"{_b} 퇴직률 조정 (%)", min_value=-30.0, max_value=30.0,
                         step=0.5, format="%.1f", key=f"k_attr_a_{_b}")
     with bar[3]:
         raise_by_tier = {}
